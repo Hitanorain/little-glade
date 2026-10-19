@@ -17,7 +17,7 @@
     --line: #dccfb5;
     --slate: #5f72a3;
     --slate-ink: #fbf7ee;
-    --sky: #cfdcef;
+    --sky: #b9d8f5;
     --font-display: "ZCOOL XiaoWei", "STKaiti", "KaiTi", serif;
     --font-body: "Noto Serif SC", "Songti SC", "SimSun", serif;
     color-scheme: light;
@@ -86,6 +86,7 @@
   }
   .chip.on { background: var(--slate); color: var(--slate-ink); border-color: var(--slate); }
   .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .title .scenes, .title .scenerow { margin-top: 8px; }
   .chips .chip { flex: 1 1 0; min-width: 0; text-align: center; padding: 3px 4px; }
   .sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
   .sw.on { box-shadow: 0 0 0 2px var(--ink); }
@@ -138,7 +139,12 @@
 
   <header class="card title">
     <h1>小小林间</h1>
-    <p>Tiny Glade 风格建造 demo。没有网格，随手拖拽，城墙、房屋、小路和花树会自己长出细节。</p>
+    <p id="subtitle">Tiny Glade 风格建造 demo。没有网格，随手拖拽，城墙、房屋、小路和花树会自己长出细节。</p>
+    <div class="chips scenes" id="sceneChips"></div>
+    <div class="btnrow scenerow">
+      <button class="btn" id="reroll" title="换一块新地形，并随机布置一个新场景">随机地形</button>
+      <button class="btn" id="sizeBtn">岛屿：中</button>
+    </div>
   </header>
 
   <aside class="card side">
@@ -260,6 +266,12 @@ function bbox(pts, pad) {
   return [x0 - pad, z0 - pad, x1 + pad, z1 + pad];
 }
 
+// 岛屿大小：由网址里的 #small / #normal / #large 决定；网格、草量、阴影、镜头都按半径推算
+const SIZE_R = { small: 20, normal: 26, large: 36 }, SIZE_NAME = { small: '小', normal: '中', large: '大' };
+const WORLD = (location.hash.match(/small|normal|large/) || ['normal'])[0];
+const R = SIZE_R[WORLD], L = R + 1, N = Math.round(2 * L / 0.386) + 1, CELL = (2 * L) / (N - 1), NN = N * N;
+const WS = R / 26;
+
 // ================= 渲染器、场景、相机 =================
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -271,11 +283,11 @@ renderer.toneMappingExposure = 1.08;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 700);
-camera.position.set(36, 31, 40);
+camera.position.set(36 * WS, 31 * WS, 40 * WS);
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.08;
-controls.minDistance = 12; controls.maxDistance = 90;
+controls.minDistance = 12; controls.maxDistance = 90 * WS;
 controls.minPolarAngle = 0.18; controls.maxPolarAngle = 1.33;
 controls.screenSpacePanning = false; controls.zoomToCursor = true;
 controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
@@ -283,7 +295,7 @@ controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_ROTATE };
 controls.target.set(0, 0, 0);
 controls.addEventListener('change', () => {
   const t = controls.target, r = Math.hypot(t.x, t.z);
-  if (r > 17) { t.x *= 17 / r; t.z *= 17 / r; }
+  if (r > 17 * WS) { t.x *= 17 * WS / r; t.z *= 17 * WS / r; }
   t.y = clamp(t.y, -1, 3);
 });
 
@@ -292,7 +304,7 @@ scene.add(hemi);
 const sun = new THREE.DirectionalLight('#fff1d6', 2.8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 160 });
+Object.assign(sun.shadow.camera, { left: -32 * WS, right: 32 * WS, top: 32 * WS, bottom: -32 * WS, near: 1, far: 160 * WS });
 sun.shadow.radius = 3.5; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
 scene.add(sun, sun.target);
 
@@ -600,9 +612,26 @@ function makePuffTex() {
 }
 const puffTex = makePuffTex();
 
+// 发光部件：符文、霓虹灯带、灯笼（纯发光，配合泛光）；晶体、蘑菇伞盖（受光照又自发光）；未来风的玻璃
+const neonMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+const neonInstMat = new THREE.MeshBasicMaterial({});
+const glowVcMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.05, envMapIntensity: 0.8 });
+glowVcMat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.55;'); };
+glowVcMat.customProgramCacheKey = () => 'glowvc';
+const glassMat = new THREE.MeshStandardMaterial({ color: '#9fdcff', metalness: 0.6, roughness: 0.06, transparent: true, opacity: 0.55, envMapIntensity: 1.6 });
+const neon = (hex, k = 2.4) => new THREE.Color(hex).multiplyScalar(k);
+const CAP_DOME = new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+const GILL = new THREE.CircleGeometry(1, 20).rotateX(Math.PI / 2);
+const HEX = new THREE.CylinderGeometry(1, 1, 1, 6);
+const HEXC = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0);
+const CRYSTAL = (() => {
+  const a = new THREE.CylinderGeometry(0.5, 0.5, 1, 6).translate(0, 0.5, 0).toNonIndexed(), c = new THREE.ConeGeometry(0.5, 0.45, 6).translate(0, 1.225, 0).toNonIndexed();
+  const g = mergeGeometries([a, c]); g.deleteAttribute('uv'); g.computeVertexNormals(); return g;
+})();
+
 // ================= 调色板 =================
 const STONE = ['#d8cab0', '#cfc0a4', '#e3d7c0', '#c4b598', '#d6ccb8', '#bfb3a0'];
-const STONE_DARK = '#a99d89', MORTAR = '#ada08b', CAP = '#cbbfa8';
+let STONE_DARK = '#a99d89', MORTAR = '#ada08b', CAP = '#cbbfa8';
 const PLASTER = ['#f3ead8', '#efe3cc', '#f6eee0'];
 const WOOD = '#7b5a3e', FRAME = '#f5efe3';
 const LEAF = ['#7fae55', '#93bd5f', '#6b9e4c', '#a1c463', '#86b35a'];
@@ -617,18 +646,19 @@ const ROOFS = [
 ];
 
 // ================= 地形 =================
-const R = 26, L = 27, N = 141, CELL = (2 * L) / (N - 1), NN = N * N;
 const BASE = new Float32Array(NN), D = new Float32Array(NN), H = new Float32Array(NN);
 const P = new Float32Array(NN), WET = new Float32Array(NN), WD = new Float32Array(NN), EDGE = new Uint8Array(NN);
 // 水域：WM 是涂抹出的水面遮罩，WB 是它模糊后的软边，DW 是由水域挖出来的地形，WLV 是每个格子所在水面的水位
 const WM = new Float32Array(NN), WB = new Float32Array(NN), DW = new Float32Array(NN), WLV = new Float32Array(NN).fill(NaN), WETW = new Float32Array(NN);
 const BC = new Float32Array(NN * 3);
-const GRIDS = { D, P, WET, WD, WM };
+const WDP = new Float32Array(NN).fill(1);   // 每个格子的水深系数（浅 0.5 / 中 1 / 深 1.8）
+const GRIDS = { D, P, WET, WD, WM, WDP };
 const gxy = i => -L + i * CELL;
 
+let TER = { ox: 11.3, oz: -4.1, amp: 1.6, freq: 0.06, lift: 0.25 };
 function baseHeight(x, z) {
   const r = Math.hypot(x, z), fade = smooth(R - 0.4, R - 6, r);
-  return ((fbm(x * 0.06 + 11.3, z * 0.06 - 4.1) - 0.5) * 1.6 + 0.25) * fade;
+  return ((fbm(x * TER.freq + TER.ox, z * TER.freq + TER.oz) - 0.5) * TER.amp + TER.lift) * fade;
 }
 function heightAt(x, z) {
   const fx = clamp((x + L) / CELL, 0, N - 1.001), fz = clamp((z + L) / CELL, 0, N - 1.001);
@@ -749,7 +779,7 @@ updateTerrain(true);
 }
 
 // ================= 草叶（实例化 + 风吹摆动） =================
-const GN = 30000;
+const GN = Math.round(30000 * Math.min((R / 26) ** 2, 1.6));
 const grassU = { uTime: { value: 0 }, uWind: { value: 1 }, uTint: { value: new THREE.Color(1, 1, 1) } };
 // 弯曲的草叶：四段，越往上越窄、越向前弯，根部深、叶尖亮
 const bladeGeo = (() => {
@@ -896,7 +926,7 @@ function removeEntity(e, quiet = false) {
     for (const [k, a] of map) { arr[k] -= a; if (name === 'D') H[k] = BASE[k] + D[k] + DW[k]; }
     terrainChanged = true;
   }
-  if (e.edits.WM) rebuildWater(true);
+  if (e.edits.WM || e.edits.WDP) rebuildWater(true);
   else if (terrainChanged) { updateTerrain(true); refreshGrass([-L, -L, L, L]); }
   const kids = [];
   e.group.traverse(o => { if (o !== e.group && (o.isMesh || o.isGroup) && o.parent === e.group) kids.push(o); });
@@ -985,7 +1015,7 @@ const clouds = new THREE.Group();
       b.add(pick(BLOBS), '#ffffff', M((k - n / 2) * rand(1.6, 2.3), rand(-0.3, 0.8), rand(-1.2, 1.2), rand(0, 6), 0, 0, s, s * 0.7, s));
     }
     const m = b.mesh(cm, false); m.receiveShadow = false;
-    const a = i / 9 * Math.PI * 2 + rand(-0.3, 0.3), r = rand(48, 75);
+    const a = i / 9 * Math.PI * 2 + rand(-0.3, 0.3), r = rand(48, 75) * WS;
     m.position.set(Math.cos(a) * r, rand(-9, 14), Math.sin(a) * r);
     m.rotation.y = rand(0, 6);
     clouds.add(m);
@@ -1020,13 +1050,15 @@ function sfx(kind) {
 }
 
 // ================= 状态 =================
-const S = { waterR: 1.7, waterMode: 'add', tool: 'wall', roof: ROOFS[0].hex, tree: 'mix', flower: 'mix', fish: 'mix', sculpt: 1, stroke: null, season: 'autumn', weather: 'sunny' };
+let ST = null;   // 当前场景风格（STYLES 里的一项）
+const S = { style: 'rustic', waterDepth: 1.0, waterR: 1.7, waterMode: 'add', tool: 'wall', roof: ROOFS[0].hex, tree: 'mix', flower: 'mix', fish: 'mix', sculpt: 1, stroke: null, season: 'autumn', weather: 'sunny' };
 
 // ================= 建造：城墙与塔楼 =================
-function wallSegment(b, len, Hh, T, merlon, vines) {
+function wallSegment(b, len, Hh, T, merlon, vines, gb = null) {
+  if (ST.build === 'scifi' || ST.build === 'oriental') return wallSegmentAlt(b, len, Hh, T, merlon, vines, gb);
   const bury = 0.8, rowH = 0.36, rows = Math.round(Hh / rowH), base = bury + 0.3;
   b.add(BOX, jc(STONE_DARK), M(0, base / 2, 0, 0, 0, 0, len + 0.04, base, T + 0.14));
-  b.add(BOX, '#ada08b', M(0, base + rows * rowH / 2, 0, 0, 0, 0, len, rows * rowH, T - 0.08));
+  b.add(BOX, MORTAR, M(0, base + rows * rowH / 2, 0, 0, 0, 0, len, rows * rowH, T - 0.08));
   for (let r = 0; r < rows; r++) {
     const y = base + r * rowH + rowH / 2;
     let x = -len / 2 - 0.02 - (r % 2) * rand(0.1, 0.3);
@@ -1041,7 +1073,18 @@ function wallSegment(b, len, Hh, T, merlon, vines) {
   }
   const top = base + rows * rowH;
   b.add(BOX, jc(CAP), M(0, top + 0.06, 0, 0, 0, 0, len + 0.04, 0.12, T + 0.12));
-  if (merlon) for (const sd of [1, -1]) b.add(BOX, jc(pick(STONE)), M(0, top + 0.29, sd * (T / 2 - 0.08), 0, 0, 0, 0.42, 0.34, 0.24));
+  if (merlon) for (const sd of [1, -1]) {
+    if (ST.build === 'magic') b.add(CONE4, jc(pick(STONE)), M(0, top + 0.36, sd * (T / 2 - 0.1), Math.PI / 4, 0, 0, 0.2, 0.5, 0.2));
+    else b.add(BOX, jc(pick(STONE)), M(0, top + 0.29, sd * (T / 2 - 0.08), 0, 0, 0, 0.42, 0.34, 0.24));
+  }
+  // 魔法城墙上闪着微光的符文
+  if (ST.build === 'magic' && gb && Math.random() < 0.55) {
+    const y = base + rows * rowH * rand(0.35, 0.7), c = neon(pick(['#9f7bff', '#5fd8ff', '#ff7bd8']), 2.2);
+    for (const sd of [1, -1]) {
+      gb.add(BOX, c, M(rand(-len * 0.15, len * 0.15), y, sd * (T / 2 + 0.035), 0, 0, 0, len * rand(0.3, 0.55), 0.05, 0.02));
+      gb.add(BOX, c, M(rand(-len * 0.25, len * 0.25), y + rand(0.15, 0.35), sd * (T / 2 + 0.035), 0, 0, Math.PI / 4, 0.09, 0.09, 0.02));
+    }
+  }
   if (vines) {
     const sd = Math.random() < 0.5 ? 1 : -1, x0 = rand(-len / 2, len / 2), n = 4 + Math.floor(rand(0, 6)), hmax = rand(0.6, 1.9);
     for (let k = 0; k < n; k++) {
@@ -1053,11 +1096,12 @@ function wallSegment(b, len, Hh, T, merlon, vines) {
 }
 
 function addTower(e, x, z, delay = 0, roofHex = S.roof) {
+  if (ST.build !== 'rustic') return addTowerAlt(e, x, z, delay, roofHex);
   const r = 1.05, Ht = 3.3 + rand(0, 0.7), bury = 0.8;
   let y0 = heightAt(x, z);
   for (let a = 0; a < 6; a++) y0 = Math.min(y0, heightAt(x + Math.cos(a) * r, z + Math.sin(a) * r));
   const b = new Builder();
-  b.add(CYL, '#ada08b', M(0, (bury + Ht) / 2, 0, 0, 0, 0, r - 0.12, bury + Ht, r - 0.12));
+  b.add(CYL, MORTAR, M(0, (bury + Ht) / 2, 0, 0, 0, 0, r - 0.12, bury + Ht, r - 0.12));
   const rowH = 0.38, nr = Math.ceil((Ht + bury) / rowH), n = 12;
   for (let k = 0; k < nr; k++) {
     const y = k * rowH + rowH / 2, off = (k % 2) * 0.5;
@@ -1104,6 +1148,79 @@ function addTower(e, x, z, delay = 0, roofHex = S.roof) {
   hideGrass(e, [x - 1.6, z - 1.6, x + 1.6, z + 1.6], (gx, gz) => Math.hypot(gx - x, gz - z) < r + 0.25);
   forCells(x - 2, z - 2, x + 2, z + 2, (cx, cz, k) => paintMax(e, 'P', k, 0.4 * smooth(r + 0.9, r, Math.hypot(cx - x, cz - z))));
 }
+// 魔法：细高的法师塔 + 发光窗 + 旋转光环；未来：白色圆塔 + 灯带 + 玻璃穹顶 + 闪灯天线；和风：五重塔
+function addTowerAlt(e, x, z, delay, roofHex) {
+  const st = ST.build, bury = 0.8, r = st === 'oriental' ? 1.15 : st === 'scifi' ? 0.95 : 1.0;
+  let y0 = heightAt(x, z);
+  for (let a = 0; a < 6; a++) y0 = Math.min(y0, heightAt(x + Math.cos(a) * r, z + Math.sin(a) * r));
+  const b = new Builder(), gb = new Builder(), wb = new Builder(), rb = new Builder(), rgb = new Builder(), roof = new THREE.Group();
+  roof.position.set(x, y0, z);
+  const tang = a => yaw(-Math.sin(a), Math.cos(a));
+  if (st === 'magic') {
+    const Ht = rand(5.2, 6.6), nr = Math.ceil((Ht + bury) / 0.38), n = 11;
+    b.add(CYL, MORTAR, M(0, (bury + Ht) / 2, 0, 0, 0, 0, r * 0.8, bury + Ht, r * 0.8));
+    for (let k = 0; k < nr; k++) {
+      const y = k * 0.38 + 0.19, rk = r * (1 - 0.22 * y / (Ht + bury)), off = (k % 2) * 0.5;
+      for (let q = 0; q < n; q++) { const a = (q + off) / n * Math.PI * 2; b.add(BOX, jc(pick(STONE), 0.03), M(Math.cos(a) * (rk - 0.15), y, Math.sin(a) * (rk - 0.15), tang(a), 0, 0, 2 * Math.PI * rk / n * 0.93, 0.345, 0.32)); }
+    }
+    const rt = r * 0.78;
+    for (let q = 0; q < 12; q++) { const a = q / 12 * Math.PI * 2; b.add(BOX, jc(CAP), M(Math.cos(a) * (rt + 0.05), bury + Ht + 0.1, Math.sin(a) * (rt + 0.05), tang(a), 0, 0, 2 * Math.PI * rt / 12, 0.2, 0.36)); }
+    for (let w = 0; w < 4; w++) { const a = rand(0, Math.PI * 2), y = bury + rand(1.2, Ht - 0.8), rk = r * (1 - 0.22 * y / (Ht + bury)) - 0.02; gb.add(BOX, neon(ST.windowGlow, 2.2), M(Math.cos(a) * rk, y, Math.sin(a) * rk, tang(a), 0, 0, 0.18, 0.42, 0.06)); }
+    const ch = rand(3.2, 4.2), cr = rt + 0.42;
+    const cone = new THREE.Mesh(scaleUV(new THREE.ConeGeometry(cr, ch, 18, 1), 2 * Math.PI * cr / 1.7, Math.hypot(cr, ch) / 1.7), roofMat(roofHex));
+    cone.position.y = Ht + 0.2 + ch / 2; cone.castShadow = cone.receiveShadow = true; cone.userData.own = true; roof.add(cone);
+    rgb.add(ICO, neon('#ffe08a', 2.6), M(0, Ht + 0.2 + ch + 0.12, 0, 0, 0, 0, 0.16, 0.16, 0.16));
+    const ring = new Builder().add(new THREE.TorusGeometry(cr + 0.3, 0.03, 6, 48), neon('#c8a0ff', 2.2), M(0, Ht + 0.7, 0, 0, Math.PI / 2 + 0.25, 0)).mesh(neonMat, false);
+    roof.add(ring); (e.spin || (e.spin = [])).push(ring);
+  } else if (st === 'scifi') {
+    const Ht = rand(4.2, 5.4);
+    b.add(CYL, jc('#8a939c'), M(0, (bury + 0.2) / 2, 0, 0, 0, 0, r + 0.15, bury + 0.2, r + 0.15));
+    b.add(CYL, jc('#e9edf0', 0.01), M(0, bury + Ht / 2, 0, 0, 0, 0, r, Ht, r));
+    for (let k = 1; k < 5; k++) b.add(CYL, '#c3cbd2', M(0, bury + Ht * k / 5, 0, 0, 0, 0, r + 0.02, 0.05, r + 0.02));
+    gb.add(CYL, neon(ST.accent, 2.4), M(0, bury + Ht * 0.55, 0, 0, 0, 0, r + 0.03, 0.08, r + 0.03));
+    gb.add(CYL, neon(ST.accent, 2.4), M(0, bury + Ht - 0.15, 0, 0, 0, 0, r + 0.03, 0.06, r + 0.03));
+    for (let q = 0; q < 8; q++) { const a = q / 8 * Math.PI * 2; wb.add(BOX, '#ffffff', M(Math.cos(a) * (r + 0.005), bury + Ht * 0.78, Math.sin(a) * (r + 0.005), tang(a), 0, 0, 0.36, 0.5, 0.04)); }
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(r * 0.92, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), glassMat);
+    dome.position.y = Ht; dome.userData.own = true; roof.add(dome);
+    rb.add(CYL, jc(roofHex), M(0, Ht + 0.04, 0, 0, 0, 0, r + 0.06, 0.08, r + 0.06));
+    rb.add(CYL_LO, '#b8c0c8', M(0, Ht + r * 0.9 + 0.7, 0, 0, 0, 0, 0.03, 1.4, 0.03));
+    const bl = new Builder().add(ICO, neon('#ff4a3a', 3), M(0, Ht + r * 0.9 + 1.42, 0, 0, 0, 0, 0.08, 0.08, 0.08)).mesh(neonMat, false);
+    bl.userData.ph = rand(0, 1); roof.add(bl); (e.blink || (e.blink = [])).push(bl);
+  } else {
+    // 五重塔：深色木构 + 白壁，层层出挑的瓦檐，顶上相轮
+    const tiers = 4 + (Math.random() < 0.5 ? 1 : 0), w0 = r * 1.7;
+    b.add(BOX, jc('#8a877e'), M(0, (bury + 0.3) / 2, 0, 0, 0, 0, w0 + 0.6, bury + 0.3, w0 + 0.6));
+    let y = bury + 0.3;
+    for (let t = 0; t < tiers; t++) {
+      const th = t === 0 ? 1.1 : 0.8, ww = w0 * (1 - t * 0.12);
+      b.add(BOX, jc('#efe7d6', 0.01), M(0, y + th / 2, 0, 0, 0, 0, ww, th, ww));
+      for (const [px, pz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) b.add(BOX, jc('#3a2a22', 0.02), M(px * ww / 2, y + th / 2, pz * ww / 2, 0, 0, 0, 0.13, th, 0.13));
+      for (let q = 0; q < 4; q++) { const a = q * Math.PI / 2; b.add(BOX, jc('#4a3426', 0.02), M(Math.cos(a) * (ww / 2 + 0.01), y + th * 0.45, -Math.sin(a) * (ww / 2 + 0.01), a, 0, 0, 0.04, th * 0.6, ww * 0.36)); }
+      b.add(BOX, jc('#3a2a22', 0.02), M(0, y + th - 0.06, 0, 0, 0, 0, ww + 0.1, 0.12, ww + 0.1));
+      const er = (ww / 2 + 0.5) * Math.SQRT2, eh = 0.42;
+      b.add(CONE4, jc(roofHex, 0.02), M(0, y + th + eh / 2 - 0.02, 0, Math.PI / 4, 0, 0, er, eh, er));
+      for (let q = 0; q < 4; q++) { const a = Math.PI / 4 + q * Math.PI / 2, d = er * 0.68; b.add(BOX, jc(roofHex, 0.02), M(Math.cos(a) * d, y + th + 0.02, -Math.sin(a) * d, a, 0, 0.35, 0.5, 0.06, 0.12)); }
+      y += th + eh * 0.6;
+    }
+    rb.add(CYL_LO, '#b08a3a', M(0, y + 0.75, 0, 0, 0, 0, 0.05, 1.5, 0.05));
+    for (let k = 0; k < 5; k++) rb.add(CYL, '#c09a48', M(0, y + 0.3 + k * 0.2, 0, 0, 0, 0, 0.13 - k * 0.012, 0.03, 0.13 - k * 0.012));
+    rb.add(ICO, '#d8b050', M(0, y + 1.55, 0, 0, 0, 0, 0.09, 0.12, 0.09));
+  }
+  const body = b.mesh();
+  if (gb.parts.length) body.add(gb.mesh(neonMat, false));
+  if (wb.parts.length) body.add(wb.mesh(windowMat, false));
+  body.position.set(x, y0 - bury, z);
+  e.group.add(body);
+  rise(body, delay, 0.6, 'stone');
+  if (rb.parts.length) { const m = rb.mesh(); m.position.y = -bury; roof.add(m); if (st !== 'oriental') m.position.y = 0; }
+  if (rgb.parts.length) roof.add(rgb.mesh(neonMat, false));
+  e.group.add(roof);
+  drop(roof, delay + 0.45, 0.75, 3.5, 'roof');
+  tween(0.01, delay + 0.75, () => {}, () => dust(x, z, 8, 1.6));
+  (e.towers || (e.towers = [])).push({ x, z });
+  hideGrass(e, [x - 1.8, z - 1.8, x + 1.8, z + 1.8], (gx, gz) => Math.hypot(gx - x, gz - z) < r + 0.3);
+  forCells(x - 2, z - 2, x + 2, z + 2, (cx, cz, k) => paintMax(e, 'P', k, 0.4 * smooth(r + 0.9, r, Math.hypot(cx - x, cz - z))));
+}
 function towerDist(e, x, z) { let m = Infinity; for (const t of e.towers || []) m = Math.min(m, Math.hypot(x - t.x, z - t.z) - 1.1); return m; }
 
 function buildLoneTower(p, delay = 0) {
@@ -1127,9 +1244,10 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
     const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
     const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
     const y0 = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z), heightAt(mx, mz));
-    const bl = new Builder();
-    wallSegment(bl, len + 0.08, Hh, T, i % 2 === 0, Math.random() < 0.22);
+    const bl = new Builder(), gl = new Builder();
+    wallSegment(bl, len + 0.08, Hh, T, i % 2 === 0, Math.random() < 0.22, gl);
     const m = bl.mesh();
+    if (gl.parts.length) m.add(gl.mesh(neonMat, false));
     m.position.set(mx, y0 - 0.8, mz); m.rotation.y = yaw(dx, dz);
     e.group.add(m);
     rise(m, delay + i * 0.035, 0.5, 'stone');
@@ -1153,7 +1271,7 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
     idxs.add(0); idxs.add(pts.length - 1);
     const n = Math.floor(total / 10); for (let k = 1; k <= n; k++) if (total * k / (n + 1) > 3) idxs.add(at(total * k / (n + 1)));
   }
-  for (const i of idxs) addTower(e, pts[i].x, pts[i].z, delay + i * 0.035 + 0.15, roofHex);
+  if (ST.wallTowers !== false) for (const i of idxs) addTower(e, pts[i].x, pts[i].z, delay + i * 0.035 + 0.15, roofHex);
   e.dist = (x, z) => Math.min(distPoly(x, z, pts) - 0.45, towerDist(e, x, z));
   clearNature(e);
   hideGrass(e, bbox(pts, 1.5), (x, z) => distPoly(x, z, pts) < T / 2 + 0.25);
@@ -1163,8 +1281,34 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
   return e;
 }
 
+// 未来风：白色面板墙 + 霓虹灯带；和风：土塀（土黄色泥墙 + 瓦檐）
+function wallSegmentAlt(b, len, Hh, T, merlon, vines, gb) {
+  const bury = 0.8;
+  if (ST.build === 'scifi') {
+    const y1 = bury + 0.2;
+    b.add(BOX, jc('#8a939c'), M(0, y1 / 2, 0, 0, 0, 0, len + 0.04, y1, T + 0.16));
+    b.add(BOX, jc('#e9edf0', 0.01), M(0, y1 + Hh / 2, 0, 0, 0, 0, len + 0.03, Hh, T));
+    for (let x = -len / 2 + 0.35; x < len / 2; x += 0.7) for (const sd of [1, -1]) b.add(BOX, '#c9d1d8', M(x, y1 + Hh / 2, sd * (T / 2 + 0.005), 0, 0, 0, 0.025, Hh * 0.92, 0.02));
+    b.add(BOX, jc('#d3dae0'), M(0, y1 + Hh + 0.06, 0, 0, 0, 0, len + 0.04, 0.12, T + 0.1));
+    if (gb) {
+      for (const sd of [1, -1]) gb.add(BOX, neon(ST.accent, 2.4), M(0, y1 + Hh * 0.62, sd * (T / 2 + 0.02), 0, 0, 0, len + 0.03, 0.06, 0.02));
+      gb.add(BOX, neon(ST.accent, 1.8), M(0, y1 + Hh + 0.13, 0, 0, 0, 0, len + 0.03, 0.025, 0.06));
+    }
+    return y1 + Hh;
+  }
+  const y1 = bury + 0.5, top = bury + 0.2 + Hh;
+  b.add(BOX, jc('#7d7a72'), M(0, y1 / 2, 0, 0, 0, 0, len + 0.04, y1, T + 0.06));
+  b.add(BOX, jc(pick(PLASTER), 0.012), M(0, y1 + (top - y1) / 2, 0, 0, 0, 0, len + 0.03, top - y1, T - 0.12));
+  for (const sd of [1, -1]) b.add(BOX, jc('#bfa77c', 0.02), M(0, y1 + 0.35, sd * ((T - 0.12) / 2 + 0.005), 0, 0, 0, len + 0.03, 0.05, 0.02));
+  const half = (T - 0.12) / 2 + 0.24, rh = 0.3, sl = Math.hypot(half, rh), ang = Math.atan2(rh, half), tile = new THREE.Color(ST.wallTile);
+  for (const sd of [1, -1]) b.add(BOX, jc(tile, 0.02), M(0, top + rh / 2 - 0.04, sd * half / 2, 0, sd * ang, 0, len + 0.06, 0.06, sl));
+  b.add(CYL, tile.clone().offsetHSL(0, 0, -0.05), M(0, top + rh - 0.02, 0, 0, 0, Math.PI / 2, 0.06, len + 0.08, 0.06));
+  return top + rh;
+}
+
 // ================= 建造：房屋 =================
 function buildHouse(a, b, delay = 0, roofHex = S.roof) {
+  if (ST.build === 'scifi' || ST.build === 'oriental') return buildHouseAlt(a, b, delay, roofHex);
   let dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
   if (len < 0.5) {
     const v = new THREE.Vector3(); camera.getWorldDirection(v);
@@ -1172,7 +1316,7 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
     a = { x: a.x - dx * len / 2, z: a.z - dz * len / 2 };
   } else { dx /= len; dz /= len; }
   const Lh = clamp(len, 2.4, 9), W = clamp(2.3 + Lh * 0.18, 2.5, 3.8);
-  const storeys = Lh >= 5 ? 2 : 1, sh = 1.7, h = storeys * sh, rh = W * 0.62, top = 0.45 + h, half = W / 2;
+  const storeys = Lh >= 5 ? 2 : 1, sh = 1.7, h = storeys * sh, rh = W * ST.pitch, top = 0.45 + h, half = W / 2;
   const cx = a.x + dx * Lh / 2, cz = a.z + dz * Lh / 2, th = yaw(dx, dz), ct = Math.cos(th), st = Math.sin(th);
   const toWorld = (lx, lz) => ({ x: cx + lx * ct + lz * st, z: cz - lx * st + lz * ct });
   let y0 = heightAt(cx, cz);
@@ -1187,11 +1331,12 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   e.dist = sdf;
   clearNature(e);
   const root = new THREE.Group(); root.position.set(cx, y0, cz); root.rotation.y = th;
+  if (ST.lean) root.rotation.z = rand(-1, 1) * ST.lean;
   e.group.add(root);
 
   const bd = new Builder(), wb = new Builder();
   const plaster = jc(pick(PLASTER), 0.015), shutter = new THREE.Color(roofHex).offsetHSL(0, -0.05, 0.08);
-  bd.add(BOX, jc('#b8ad98'), M(0, -0.275, 0, 0, 0, 0, Lh + 0.16, 1.45, W + 0.16));
+  bd.add(BOX, jc(STONE_DARK), M(0, -0.275, 0, 0, 0, 0, Lh + 0.16, 1.45, W + 0.16));
   for (let i = 0; i < 14; i++) {
     const side = pick(['+z', '-z', '+x', '-x']), u = rand(-0.45, 0.45);
     const along = side[1] === 'z' ? Lh : W, n = side[0] === '+' ? 1 : -1;
@@ -1203,7 +1348,7 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   const body = new THREE.ExtrudeGeometry(shape, { depth: Lh, bevelEnabled: false });
   body.translate(0, 0, -Lh / 2); body.rotateY(Math.PI / 2);
   bd.add(body, plaster, M(0, 0.45, 0)); body.dispose();
-  const beam = '#6f4f36';
+  const beam = ST.beam;
   for (const sx of [1, -1]) for (const sz of [1, -1]) bd.add(BOX, jc(beam, 0.02), M(sx * Lh / 2, 0.45 + h / 2, sz * half, 0, 0, 0, 0.16, h, 0.16));
   for (const sz of [1, -1]) {
     bd.add(BOX, jc(beam, 0.02), M(0, top - 0.07, sz * half, 0, 0, 0, Lh + 0.1, 0.14, 0.1));
@@ -1256,10 +1401,13 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   wpart(bd, '+z', 0.24, 0.45 + 0.6, 0.1, 0.06, 0.06, 0.06, '#e1bd62', ICO);
   wpart(bd, '+z', 0, 0.36, 0.25, 1.05, 0.18, 0.5, jc(STONE_DARK));
   wpart(bd, '+z', 0, 0.45 + 1.42, 0.24, 1.15, 0.07, 0.5, new THREE.Color(roofHex).offsetHSL(0, 0, -0.05));
+  const gbh = new Builder();
+  if (ST.build === 'magic') for (const u of [-0.62, 0.62]) wpart(gbh, '+z', u, 0.45 + 1.25, 0.16, 0.13, 0.17, 0.13, neon(ST.windowGlow, 2.4), ICO);
 
   const base = new THREE.Group();
   const bm = bd.mesh(); base.add(bm);
   const wm = wb.mesh(windowMat, false); base.add(wm);
+  if (gbh.parts.length) base.add(gbh.mesh(neonMat, false));
   root.add(base);
   rise(base, delay, 0.6, 'wood');
 
@@ -1283,11 +1431,99 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   drop(roof, delay + 0.45, 0.75, 4, 'roof');
   tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
   const cw = toWorld(chx, chz);
-  e.chimneys.push({ x: cw.x, y: y0 + chTop + 0.2, z: cw.z, t: -(delay + 1.4) });
+  e.chimneys.push({ x: cw.x, y: y0 + chTop + 0.2, z: cw.z, t: -(delay + 1.4), col: ST.smoke });
 
   const ext = Math.hypot(Lh, W) / 2 + 1.2;
   hideGrass(e, [cx - ext, cz - ext, cx + ext, cz + ext], (x, z) => sdf(x, z) < 0.3);
   forCells(cx - ext, cz - ext, cx + ext, cz + ext, (x, z, k) => { const d = sdf(x, z); if (d < 1) paintMax(e, 'P', k, 0.5 * smooth(1.0, 0.1, d)); });
+  updateTerrain(true);
+  return e;
+}
+
+// 未来风：带玻璃窗带和太阳能板的模块屋；和风：深色木构、白色障子、深挑檐歇山顶
+function buildHouseAlt(a, b, delay, roofHex) {
+  let dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+  if (len < 0.5) {
+    const v = new THREE.Vector3(); camera.getWorldDirection(v);
+    dx = -v.z; dz = v.x; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l; len = 3.4;
+    a = { x: a.x - dx * len / 2, z: a.z - dz * len / 2 };
+  } else { dx /= len; dz /= len; }
+  const Lh = clamp(len, 2.4, 9), W = clamp(2.3 + Lh * 0.18, 2.5, 3.8), half = W / 2;
+  const cx = a.x + dx * Lh / 2, cz = a.z + dz * Lh / 2, th = yaw(dx, dz), ct = Math.cos(th), st = Math.sin(th);
+  const toWorld = (lx, lz) => ({ x: cx + lx * ct + lz * st, z: cz - lx * st + lz * ct });
+  let y0 = heightAt(cx, cz);
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { const q = toWorld(sx * Lh / 2, sz * half); y0 = Math.min(y0, heightAt(q.x, q.z)); }
+  const e = makeEntity('house', { block: true });
+  const sdf = (x, z) => {
+    const ox = x - cx, oz = z - cz, lu = ox * ct - oz * st, lv = ox * st + oz * ct;
+    const qx = Math.abs(lu) - Lh / 2, qz = Math.abs(lv) - half;
+    return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
+  };
+  e.dist = sdf; clearNature(e);
+  const root = new THREE.Group(); root.position.set(cx, y0, cz); root.rotation.y = th; e.group.add(root);
+  const bd = new Builder(), wb = new Builder(), gb = new Builder(), rbd = new Builder(), roof = new THREE.Group();
+  if (ST.build === 'scifi') {
+    const h = Lh >= 5 ? 2.6 : 2.0, y1 = 0.3, top = y1 + h;
+    bd.add(BOX, jc('#8a939c'), M(0, -0.3, 0, 0, 0, 0, Lh + 0.3, 1.2, W + 0.3));
+    bd.add(BOX, jc('#eef1f3', 0.01), M(0, y1 + h / 2, 0, 0, 0, 0, Lh, h, W));
+    for (const sx of [1, -1]) for (const sz of [1, -1]) bd.add(CYL, '#dfe5e9', M(sx * Lh / 2, y1 + h / 2, sz * half, 0, 0, 0, 0.18, h, 0.18));
+    for (const sd of [1, -1]) {
+      wb.add(BOX, '#ffffff', M(0, y1 + h * 0.6, sd * (half + 0.01), 0, 0, 0, Lh * 0.8, h * 0.32, 0.04));
+      wb.add(BOX, '#ffffff', M(sd * (Lh / 2 + 0.01), y1 + h * 0.6, 0, 0, 0, 0, 0.04, h * 0.32, W * 0.6));
+      gb.add(BOX, neon(ST.accent, 2.4), M(0, y1 + h * 0.2, sd * (half + 0.02), 0, 0, 0, Lh * 0.96, 0.05, 0.02));
+    }
+    bd.add(BOX, '#3a4652', M(Lh * 0.25, y1 + 0.7, half + 0.02, 0, 0, 0, 0.8, 1.4, 0.04));
+    gb.add(BOX, neon(ST.accent, 2.6), M(Lh * 0.25, y1 + 1.46, half + 0.04, 0, 0, 0, 0.8, 0.04, 0.02));
+    rbd.add(BOX, jc(roofHex), M(0, top + 0.08, 0, 0, 0, 0, Lh + 0.2, 0.16, W + 0.2));
+    const np = Math.max(1, Math.floor(Lh / 1.1));
+    for (let i = 0; i < np; i++) rbd.add(BOX, '#24365e', M(-Lh / 2 + (i + 0.5) * Lh / np, top + 0.32, -half * 0.2, 0, -0.3, 0, Lh / np * 0.85, 0.04, W * 0.5));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(W * 0.22, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), glassMat);
+    dome.position.set(Lh * 0.3, top + 0.16, half * 0.35); dome.userData.own = true; roof.add(dome);
+  } else {
+    const h = Lh >= 5 ? 2.3 : 1.9, y1 = 0.55, top = y1 + h, wood = '#3a2a20', rh = W * 0.48, o = 0.8, oG = 0.6;
+    bd.add(BOX, jc('#8d8a82'), M(0, -0.3, 0, 0, 0, 0, Lh + 1.0, 1.1, W + 1.0));
+    bd.add(BOX, jc('#7a5a3e'), M(0, y1 - 0.05, 0, 0, 0, 0, Lh + 0.9, 0.1, W + 0.9));
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) bd.add(BOX, jc(wood), M(sx * (Lh / 2 + 0.4), y1 - 0.3, sz * (half + 0.4), 0, 0, 0, 0.1, 0.5, 0.1));
+    bd.add(BOX, jc('#9a978f'), M(0, 0.2, half + 0.75, 0, 0, 0, 1.2, 0.18, 0.4));
+    const np = Math.max(2, Math.round(Lh / 0.85));
+    for (const sd of [1, -1]) for (let i = 0; i < np; i++) {
+      const u = -Lh / 2 + (i + 0.5) * Lh / np;
+      wb.add(BOX, '#ffffff', M(u, y1 + h * 0.46, sd * (half + 0.005), 0, 0, 0, Lh / np - 0.1, h * 0.82, 0.03));
+      for (let k = 1; k < 4; k++) bd.add(BOX, jc(wood), M(u, y1 + h * 0.06 + k * h * 0.2, sd * (half + 0.025), 0, 0, 0, Lh / np - 0.1, 0.025, 0.015));
+      bd.add(BOX, jc(wood), M(u, y1 + h * 0.46, sd * (half + 0.025), 0, 0, 0, 0.025, h * 0.82, 0.015));
+    }
+    for (const sd of [1, -1]) wb.add(BOX, '#ffffff', M(sd * (Lh / 2 + 0.005), y1 + h * 0.46, 0, 0, 0, 0, 0.03, h * 0.82, W - 0.3));
+    bd.add(BOX, jc(pick(PLASTER), 0.01), M(0, y1 + h / 2, 0, 0, 0, 0, Lh - 0.02, h, W - 0.02));
+    for (let i = 0; i <= np; i++) for (const sd of [1, -1]) bd.add(BOX, jc(wood), M(-Lh / 2 + i * Lh / np, y1 + h / 2, sd * half, 0, 0, 0, 0.12, h, 0.12));
+    for (const sd of [1, -1]) bd.add(BOX, jc(wood), M(0, top - 0.08, sd * half, 0, 0, 0, Lh + 0.12, 0.16, 0.14));
+    for (const sd of [1, -1]) bd.add(BOX, jc(wood), M(sd * Lh / 2, top - 0.08, 0, 0, 0, 0, 0.14, 0.16, W + 0.12));
+    const slopeLen = Math.hypot(half, rh), ang = Math.atan2(rh, half), sl = slopeLen + o, rl = Lh + 2 * oG;
+    for (const sd of [1, -1]) {
+      const g = scaleUV(new THREE.BoxGeometry(rl, 0.14, sl), rl / 1.7, sl / 1.7);
+      const m = new THREE.Mesh(g, roofMat(roofHex)); m.castShadow = m.receiveShadow = true; m.userData.own = true;
+      const ddz = sd * half / slopeLen, ddy = -rh / slopeLen, nz = sd * rh / slopeLen, ny = half / slopeLen;
+      m.position.set(0, top + rh / 2 + ddy * (o / 2) + ny * 0.07, sd * half / 2 + ddz * (o / 2) + nz * 0.07);
+      m.rotation.x = sd * ang; roof.add(m);
+    }
+    const tri = new THREE.Shape([new THREE.Vector2(-half * 0.7, 0), new THREE.Vector2(half * 0.7, 0), new THREE.Vector2(0, rh * 0.75)]);
+    for (const sd of [1, -1]) { const tg = new THREE.ExtrudeGeometry(tri, { depth: 0.05, bevelEnabled: false }); tg.rotateY(Math.PI / 2); rbd.add(tg, jc('#4a3426'), M(sd * (Lh / 2 - 0.1), top + rh * 0.3, 0)); tg.dispose(); }
+    const tile = new THREE.Color(roofHex).offsetHSL(0, 0, -0.06);
+    rbd.add(BOX, tile, M(0, top + rh + 0.08, 0, 0, Math.PI / 4, 0, rl - 0.4, 0.22, 0.22));
+    for (const sx of [1, -1]) rbd.add(BOX, tile, M(sx * (rl / 2 - 0.3), top + rh + 0.22, 0, 0, 0, 0, 0.28, 0.3, 0.3));
+    for (const sx of [1, -1]) for (const sz of [1, -1]) rbd.add(BOX, tile, M(sx * (rl / 2 - 0.15), top - 0.12, sz * (half + o * 0.85), Math.atan2(sz, sx) * 0 + (sx * sz > 0 ? -Math.PI / 4 : Math.PI / 4), 0, 0.3, 0.55, 0.08, 0.16));
+    gb.add(ICO, neon('#ffb060', 2.2), M(Lh * 0.32, top - 0.45, half + o * 0.6, 0, 0, 0, 0.13, 0.17, 0.13));
+  }
+  const base = new THREE.Group();
+  base.add(bd.mesh());
+  if (wb.parts.length) base.add(wb.mesh(windowMat, false));
+  if (gb.parts.length) base.add(gb.mesh(neonMat, false));
+  root.add(base); rise(base, delay, 0.6, 'wood');
+  if (rbd.parts.length) roof.add(rbd.mesh());
+  root.add(roof); drop(roof, delay + 0.45, 0.75, 4, 'roof');
+  tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
+  const ext = Math.hypot(Lh, W) / 2 + 1.6;
+  hideGrass(e, [cx - ext, cz - ext, cx + ext, cz + ext], (x, z) => sdf(x, z) < 0.5);
+  forCells(cx - ext, cz - ext, cx + ext, cz + ext, (x, z, k) => { const d = sdf(x, z); if (d < 1.2) paintMax(e, 'P', k, 0.5 * smooth(1.2, 0.2, d)); });
   updateTerrain(true);
   return e;
 }
@@ -1301,28 +1537,37 @@ function buildPath(raw, delay = 0) {
   const e = makeEntity('path'); e.raw = raw.map(q => ({ x: q.x, z: q.z }));
   e.dist = (x, z) => distPoly(x, z, pts) - 0.6;
   clearNature(e);
-  const inst = new THREE.InstancedMesh(PEB, pathMat, pts.length * 3);
-  inst.receiveShadow = true; inst.frustumCulled = false;
-  let k = 0;
+  // 石子路 / 发光石路 / 六边形地砖 / 和风踏脚石
+  const PS = ST.path, geo = PS === 'hex' ? HEX : PEB;
+  const inst = new THREE.InstancedMesh(geo, pathMat, pts.length * 3), ginst = new THREE.InstancedMesh(geo, neonInstMat, pts.length * 3);
+  inst.receiveShadow = true; inst.frustumCulled = false; ginst.frustumCulled = false;
+  let k = 0, gk = 0;
   for (let i = 0; i < pts.length; i++) {
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
     let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+    if (PS === 'stepping') {
+      if (i % 2) continue;
+      const off = (i % 4 ? 0.18 : -0.18) + rand(-0.05, 0.05), x = pts[i].x - tz * off, z = pts[i].z + tx * off;
+      _m.compose(_p.set(x, heightAt(x, z) + 0.02, z), _q.setFromAxisAngle(UP, rand(0, 6.28)), _s.set(rand(0.3, 0.38), rand(0.07, 0.1), rand(0.24, 0.32)));
+      inst.setMatrixAt(k, _m); inst.setColorAt(k, jc(pick(COBBLE), 0.03)); k++;
+      continue;
+    }
     for (const j of [-1, 0, 1]) {
-      if (Math.random() < 0.13) continue;
-      const off = j * 0.38 + rand(-0.08, 0.08), al = rand(-0.08, 0.08);
+      if (PS !== 'hex' && Math.random() < 0.13) continue;
+      const off = j * (PS === 'hex' ? 0.44 : 0.38) + (PS === 'hex' ? 0 : rand(-0.08, 0.08)), al = PS === 'hex' ? (j === 0 ? 0 : 0.14) : rand(-0.08, 0.08);
       const x = pts[i].x - tz * off + tx * al, z = pts[i].z + tx * off + tz * al;
-      _m.compose(_p.set(x, heightAt(x, z) + 0.01, z), _q.setFromAxisAngle(UP, rand(0, 6.28)), _s.set(rand(0.16, 0.24), rand(0.07, 0.11), rand(0.13, 0.2)));
-      inst.setMatrixAt(k, _m);
-      inst.setColorAt(k, jc(pick(COBBLE), 0.03));
-      k++;
+      if (PS === 'hex') { if (i % 2) continue; _m.compose(_p.set(x, heightAt(x, z) + 0.02, z), _q.setFromAxisAngle(UP, yaw(tx, tz)), _s.set(0.25, 0.05, 0.25)); }
+      else _m.compose(_p.set(x, heightAt(x, z) + 0.01, z), _q.setFromAxisAngle(UP, rand(0, 6.28)), _s.set(rand(0.16, 0.24), rand(0.07, 0.11), rand(0.13, 0.2)));
+      if ((PS === 'glow' || PS === 'hex') && Math.random() < (PS === 'hex' ? 0.16 : 0.1)) { ginst.setMatrixAt(gk, _m); ginst.setColorAt(gk, neon(pick(ST.pathGlow), 2.2)); gk++; }
+      else { inst.setMatrixAt(k, _m); inst.setColorAt(k, jc(pick(COBBLE), 0.03)); k++; }
     }
   }
-  const total = k; inst.count = 0;
-  e.group.add(inst);
+  const total = k, gtotal = gk; inst.count = 0; ginst.count = 0;
+  e.group.add(inst); if (gtotal) e.group.add(ginst);
   let last = 0;
-  tween(0.4 + polyLen(pts) * 0.03, delay, t => { inst.count = Math.floor(total * t); if (inst.count - last > 6) { last = inst.count; sfx('stone'); } });
+  tween(0.4 + polyLen(pts) * 0.03, delay, t => { inst.count = Math.floor(total * t); ginst.count = Math.floor(gtotal * t); if (inst.count - last > 6) { last = inst.count; sfx('stone'); } });
   for (let i = 4; i < pts.length - 2; i += 3) {
-    if (Math.random() > 0.2) continue;
+    if (Math.random() > (ST.build === 'scifi' ? 0.06 : 0.2)) continue;
     const a = pts[i - 1], b = pts[i + 1], tl = Math.hypot(b.x - a.x, b.z - a.z) || 1, sd = Math.random() < 0.5 ? 1 : -1;
     const x = pts[i].x - (b.z - a.z) / tl * sd * 1.05, z = pts[i].z + (b.x - a.x) / tl * sd * 1.05;
     const m = flowerCluster('mix'); m.position.set(x, heightAt(x, z), z); m.rotation.y = rand(0, 6);
@@ -1342,14 +1587,29 @@ function buildFence(raw, delay = 0) {
   const e = makeEntity('fence', { block: true }); e.raw = raw.map(q => ({ x: q.x, z: q.z }));
   e.dist = (x, z) => distPoly(x, z, pts) - 0.18;
   for (let i = 0; i < pts.length; i++) {
-    const p = pts[i], y = heightAt(p.x, p.z), b = new Builder(), wood = jc('#9a7652', 0.04);
-    b.add(BOX, wood, M(0, 0.25, 0, rand(-0.2, 0.2), rand(-0.03, 0.03), rand(-0.03, 0.03), 0.13, 1.0, 0.13));
-    b.add(CONE4, wood, M(0, 0.82, 0, Math.PI / 4, 0, 0, 0.11, 0.14, 0.11));
+    const p = pts[i], y = heightAt(p.x, p.z), b = new Builder(), gb = new Builder(), F = ST.fence;
+    const wood = jc(F === 'magic' ? '#4a3a4a' : F === 'scifi' ? '#e6eaee' : F === 'bamboo' ? '#b8b060' : '#9a7652', 0.04);
+    const rail = F === 'magic' ? '#56445a' : F === 'bamboo' ? '#a8a858' : '#a17d58';
+    if (F === 'bamboo') {
+      b.add(CYL, wood, M(0, 0.3, 0, 0, rand(-0.03, 0.03), rand(-0.03, 0.03), 0.055, 1.1, 0.055));
+      for (const ny of [0.2, 0.55]) b.add(CYL, jc('#8f9446'), M(0, ny, 0, 0, 0, 0, 0.065, 0.03, 0.065));
+    } else {
+      b.add(BOX, wood, M(0, 0.25, 0, rand(-0.2, 0.2), rand(-0.03, 0.03), rand(-0.03, 0.03), F === 'scifi' ? 0.1 : 0.13, 1.0, F === 'scifi' ? 0.1 : 0.13));
+      if (F === 'magic' && i % 3 === 0) gb.add(ICO, neon(pick(['#c8a0ff', '#7fe0ff']), 2.4), M(0, 0.86, 0, 0, 0, 0, 0.1, 0.1, 0.1));
+      else if (F === 'scifi') gb.add(BOX, neon(ST.accent, 2.4), M(0, 0.77, 0, 0, 0, 0, 0.11, 0.04, 0.11));
+      else b.add(CONE4, wood, M(0, 0.82, 0, Math.PI / 4, 0, 0, 0.11, 0.14, 0.11));
+    }
     if (i < pts.length - 1) {
       const q = pts[i + 1], dx = q.x - p.x, dz = q.z - p.z, dy = heightAt(q.x, q.z) - y, len = Math.hypot(dx, dz);
-      for (const ry of [0.32, 0.6]) b.add(BOX, jc('#a17d58', 0.04), M(dx / 2, ry + dy / 2, dz / 2, yaw(dx, dz), 0, Math.atan2(dy, len), Math.hypot(len, dy) + 0.06, 0.075, 0.05));
+      for (const ry of [0.32, 0.6]) {
+        const mm = M(dx / 2, ry + dy / 2, dz / 2, yaw(dx, dz), 0, Math.atan2(dy, len), Math.hypot(len, dy) + 0.06, F === 'scifi' ? 0.035 : 0.075, F === 'scifi' ? 0.035 : 0.05);
+        if (F === 'scifi') gb.add(BOX, neon(ST.accent, 2.2), mm);
+        else if (F === 'bamboo') b.add(CYL, jc(rail, 0.04), M(dx / 2, ry + dy / 2, dz / 2, yaw(dx, dz), 0, Math.atan2(dy, len) - Math.PI / 2, 0.035, Math.hypot(len, dy) + 0.1, 0.035));
+        else b.add(BOX, jc(rail, 0.04), mm);
+      }
     }
     const m = b.mesh(); m.position.set(p.x, y, p.z);
+    if (gb.parts.length) m.add(gb.mesh(neonMat, false));
     e.group.add(m);
     rise(m, delay + i * 0.06, 0.45, 'wood');
   }
@@ -1369,11 +1629,28 @@ const SPECIES = {
   sweetgum:  { name: '枫香', form: 'pyramid', bark: '#5e5048', cell: 'star', leaf: { spring: ['#9fca5e', '#b2d36c'], summer: ['#3f7a36', '#4d8a3e'], autumn: ['#7a2e5a', '#c8322a', '#e8a02a', '#f2d04a', '#9a2a48'], winter: null } },
   spruce:    { name: '蓝杉', form: 'spruce', bark: '#5a4a3e', cell: 'spruce', leaf: { spring: ['#7aa0ab', '#8bb0b8', '#6a909c'], summer: ['#6f93a0', '#7fa3ad', '#5d8290'], autumn: ['#6f93a0', '#7fa3ad', '#5d8290'], winter: ['#64858f', '#728f98'] } },
   whitepine: { name: '乔松', form: 'pine', bark: '#5b4a3c', cell: 'pine', leaf: { spring: ['#4f7f55', '#5a8c5e'], summer: ['#3f6f4a', '#4c7d55', '#3a6544'], autumn: ['#3f6f4a', '#4c7d55'], winter: ['#3a6044', '#45694c'] } },
-  sequoia:   { name: '巨杉', form: 'giant', bark: '#8a4a32', cell: 'sequoia', card: 0.62, leaf: { spring: ['#5f8a4a', '#6a9452', '#577f44'], summer: ['#4a7a3f', '#557f45', '#3f6b38'], autumn: ['#4a7a3f', '#557f45', '#3f6b38'], winter: ['#456f3c', '#4f7644'] } }
+  sequoia:   { name: '巨杉', form: 'giant', bark: '#8a4a32', cell: 'sequoia', card: 0.62, leaf: { spring: ['#5f8a4a', '#6a9452', '#577f44'], summer: ['#4a7a3f', '#557f45', '#3f6b38'], autumn: ['#4a7a3f', '#557f45', '#3f6b38'], winter: ['#456f3c', '#4f7644'] } },
+  // 魔法世界
+  moonwillow:  { name: '月光柳', form: 'weeping', bark: '#4a4058', cell: 'ovate', leaf: { spring: ['#9fd8ff', '#b8c8ff', '#d0b8ff'], summer: ['#7fc4f0', '#9fb0f8', '#b89cf0'], autumn: ['#c49cf0', '#e0a8e8', '#9f88e8'], winter: ['#c8d8ff', '#e0e8ff'] } },
+  crystaltree: { name: '水晶树', form: 'round', bark: '#6a5f80', cell: 'star', leaf: { all: ['#f0a8ff', '#a8f0ff', '#ffd0f0', '#c8b8ff'] } },
+  mushroom:    { name: '巨蘑菇', form: 'mushroom', bark: '#efe6d8', cell: 'round', leaf: { all: ['#ffffff'] } },
+  spiritoak:   { name: '灵橡', form: 'spread', bark: '#4f4a5a', cell: 'oak', leaf: { spring: ['#7fe0c8', '#9ff0d0'], summer: ['#4fc0b0', '#62d0b8', '#3fa8a0'], autumn: ['#f0c860', '#e0a040', '#7fd0b8'], winter: null } },
+  duskpine:    { name: '暮色松', form: 'spruce', bark: '#3f3848', cell: 'spruce', leaf: { all: ['#4a5a9a', '#5a6ab0', '#6a5aa8'] } },
+  // 未来科技
+  cyberpine:   { name: '光纤松', form: 'spruce', bark: '#9aa4ae', cell: 'spruce', leaf: { all: ['#5fe8ff', '#3fc8f0', '#8ff0ff'] } },
+  orbtree:     { name: '球冠树', form: 'round', bark: '#c8d0d8', cell: 'round', leaf: { all: ['#e8f4f8', '#c8eaf2', '#9fe0ee'] } },
+  helix:       { name: '螺旋树', form: 'column', bark: '#b0b8c0', cell: 'star', leaf: { all: ['#ff6fd8', '#c86fff', '#ff9fe8'] } },
+  // 日式庭园
+  sakura:      { name: '樱花', form: 'vase', bark: '#4a3a36', cell: 'ovate', springCell: 'redbudFlower', leaf: { spring: ['#ffc8d8', '#ffb0c8', '#ffe0e8'], summer: ['#5f9a46', '#6aa34e'], autumn: ['#e89a5a', '#d97a4a', '#c8a050'], winter: null } },
+  shidare:     { name: '垂枝樱', form: 'weeping', bark: '#4a3a36', cell: 'ovate', springCell: 'redbudFlower', leaf: { spring: ['#ffd0e0', '#ffb8cc', '#fff0f4'], summer: ['#6a9e4a', '#76a852'], autumn: ['#e0a060', '#d08850'], winter: null } },
+  blackpine:   { name: '黑松', form: 'niwaki', bark: '#3f3630', cell: 'pine', leaf: { all: ['#2f5a3a', '#3a6544', '#2a5034'] } },
+  japmaple:    { name: '鸡爪槭', form: 'round', bark: '#4a3a34', cell: 'maple', leaf: { spring: ['#c8503e', '#d86a4a'], summer: ['#9a3a3a', '#b04a40', '#7a3038'], autumn: ['#e83a2a', '#f05a2a', '#d02a30'], winter: null } },
+  bamboo:      { name: '竹子', form: 'bamboo', bark: '#8fae4a', cell: 'bamboo', leaf: { all: ['#6fa04a', '#7fb052', '#5f9040'] } }
 };
+for (const sp of Object.values(SPECIES)) if (sp.leaf.all) { const a = sp.leaf.all; sp.leaf = { spring: a, summer: a, autumn: a, winter: a }; }
 
 // —— 叶片图集：每格画一簇真实形状的叶子（灰白色，靠顶点色上季节色） ——
-const LEAF_CELLS = ['maple', 'oak', 'ovate', 'round', 'heart', 'star', 'spruce', 'pine', 'sequoia', 'dogwoodFlower', 'redbudFlower'];
+const LEAF_CELLS = ['maple', 'oak', 'ovate', 'round', 'heart', 'star', 'spruce', 'pine', 'sequoia', 'dogwoodFlower', 'redbudFlower', 'bamboo'];
 function leafPath(g, kind, L) {
   g.beginPath();
   if (kind === 'maple' || kind === 'star') {
@@ -1393,7 +1670,7 @@ function leafPath(g, kind, L) {
   } else if (kind === 'heart') {
     const w = 0.5; g.moveTo(L * 0.1, 0); g.bezierCurveTo(-L * 0.15, -L * w, L * 0.65, -L * w * 1.1, L, 0); g.bezierCurveTo(L * 0.65, L * w * 1.1, -L * 0.15, L * w, L * 0.1, 0);
   } else {
-    const w = kind === 'round' ? 0.46 : 0.32; g.moveTo(0, 0); g.bezierCurveTo(L * 0.25, -L * w, L * 0.7, -L * w, L, 0); g.bezierCurveTo(L * 0.7, L * w, L * 0.25, L * w, 0, 0);
+    const w = kind === 'round' ? 0.46 : kind === 'lance' ? 0.12 : 0.32; g.moveTo(0, 0); g.bezierCurveTo(L * 0.25, -L * w, L * 0.7, -L * w, L, 0); g.bezierCurveTo(L * 0.7, L * w, L * 0.25, L * w, 0, 0);
   }
   g.closePath();
 }
@@ -1467,7 +1744,8 @@ function drawBlossom(g, S, kind) {
 function drawLeafCell(g, S, kind) {
   if (kind === 'spruce' || kind === 'pine' || kind === 'sequoia') return drawNeedles(g, S, kind);
   if (kind === 'dogwoodFlower' || kind === 'redbudFlower') return drawBlossom(g, S, kind);
-  const C = S / 2, big = kind === 'maple' || kind === 'star' ? 1.15 : 1;
+  const C = S / 2, big = kind === 'maple' || kind === 'star' ? 1.15 : kind === 'bamboo' ? 1.45 : 1;
+  if (kind === 'bamboo') kind = 'lance';
   g.strokeStyle = 'rgb(140,135,125)'; g.lineCap = 'round';
   for (let t = 0; t < 3; t++) {
     const a0 = t / 3 * Math.PI * 2 + rand(-0.3, 0.3), len = S * 0.42, ex = C + Math.cos(a0) * len, ey = C + Math.sin(a0) * len;
@@ -1494,6 +1772,18 @@ const leafAtlas = (() => {
 const leafCardMat = new THREE.MeshStandardMaterial({ map: leafAtlas, vertexColors: true, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.72, envMapIntensity: 0.45 });
 leafCardMat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  normal = normalize(vNormal);'); };
 addSnow(leafCardMat, 'leafcard', 0.9);
+// 魔法 / 未来风格里，树叶、花和草尖会微微发光
+const glowU = { value: 0 }, grassGlowU = { value: 0 };
+function addGlow(mat, u) {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
+    sh.uniforms.uGlow = u;
+    sh.fragmentShader = 'uniform float uGlow;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * uGlow;');
+  };
+  mat.customProgramCacheKey = () => prevKey() + '-glow';
+}
+addGlow(leafCardMat, glowU); addGlow(flowerMat, glowU); addGlow(grassMat, grassGlowU);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 function setCrownCell(g, cell) {
   const i = LEAF_CELLS.indexOf(cell), cu = (i % 4) / 4, cv = 1 - (Math.floor(i / 4) + 1) / 3, l = g.attributes.aLUV, uv = g.attributes.uv, ins = 0.012;
@@ -1556,7 +1846,7 @@ function buildTree(key) {
       blob(cx + Math.cos(a) * sq * rx * k, cy + u * ry * k, cz + Math.sin(a) * sq * rz * k, rand(r0, r1), 0.86, from);
     }
   };
-  let cr = 1.1;
+  let cr = 1.1, extra = null;
   switch (sp.form) {
     case 'oval': case 'round': {
       const th = sp.form === 'oval' ? rand(1.3, 1.7) : rand(1.0, 1.35), ry = sp.form === 'oval' ? 1.25 : 0.95;
@@ -1649,6 +1939,57 @@ function buildTree(key) {
       blob(0, h + 0.1, 0, 0.35, 0.7);
       break;
     }
+    case 'weeping': {
+      const th = rand(1.5, 1.9); cr = 1.3;
+      limb(0, -0.3, 0, 0, th + 0.6, 0, 0.18);
+      blob(0, th + 0.95, 0, 0.7, 0.7);
+      for (let i = 0; i < 11; i++) {
+        const a = i / 11 * Math.PI * 2 + rand(-0.2, 0.2), len = rand(1.1, 1.6);
+        limb(0, th + 0.6, 0, Math.cos(a) * 0.6, th + 1.0, Math.sin(a) * 0.6, 0.05);
+        for (let k = 0; k < 5; k++) { const t = k / 4, rr = 0.5 + t * len * 0.7; blob(Math.cos(a) * rr, th + 1.0 - t * t * 1.9, Math.sin(a) * rr, 0.24, 1.5); }
+      }
+      break;
+    }
+    case 'niwaki': {
+      // 修剪成云片状的庭园松：弯曲的主干，水平伸出的枝端各托一片扁平的松叶团
+      cr = 0; const h = rand(2.2, 2.8), bx = rand(-0.5, 0.5), bz = rand(-0.5, 0.5);
+      limb(0, -0.3, 0, bx * 0.5, h * 0.5, bz * 0.5, 0.16); limb(bx * 0.5, h * 0.5, bz * 0.5, bx, h, bz, 0.12);
+      for (let k = 0; k < 5; k++) {
+        const t = 0.35 + k * 0.15, ox = bx * t, oy = h * t, a = rand(0, 6.28), d = rand(0.7, 1.2) * (1 - k * 0.12), ex = ox + Math.cos(a) * d, ez = bz * t + Math.sin(a) * d;
+        limb(ox, oy, bz * t, ex, oy + 0.15, ez, 0.05);
+        blob(ex, oy + 0.3, ez, rand(0.5, 0.65) * (1 - k * 0.08), 0.32);
+      }
+      blob(bx, h + 0.2, bz, 0.5, 0.4);
+      break;
+    }
+    case 'mushroom': {
+      cr = 0;
+      const cap = new Builder(), caps = [[0, 0, rand(1.9, 2.6), rand(1.1, 1.45)]];
+      for (let i = 0; i < 2 + Math.floor(rand(0, 2)); i++) { const a = rand(0, 6.28), d = rand(0.9, 1.4); caps.push([Math.cos(a) * d, Math.sin(a) * d, rand(0.7, 1.3), rand(0.45, 0.75)]); }
+      const capCol = pick(['#e0505e', '#9a5ad8', '#3fb8d8', '#f0a040']);
+      for (const [x, z, h, r] of caps) {
+        const lx = rand(-0.15, 0.15), lz = rand(-0.15, 0.15);
+        limb(x, -0.2, z, x + lx, h, z + lz, 0.12 + r * 0.1);
+        cap.add(CAP_DOME, jc(capCol, 0.04), M(x + lx, h - 0.06, z + lz, rand(0, 6), 0, 0, r, r * 0.55, r));
+        cap.add(GILL, '#f2e6d0', M(x + lx, h - 0.05, z + lz, 0, 0, 0, r * 0.95, 1, r * 0.95));
+        for (let q = 0; q < 7; q++) { const a = rand(0, 6.28), el = rand(0.25, 1.2); cap.add(ICO, '#fff8ef', M(x + lx + Math.cos(a) * Math.cos(el) * r, h - 0.06 + Math.sin(el) * r * 0.55, z + lz + Math.sin(a) * Math.cos(el) * r, 0, 0, 0, r * 0.12, r * 0.05, r * 0.12)); }
+      }
+      extra = cap.mesh(glowVcMat, true);
+      break;
+    }
+    case 'bamboo': {
+      cr = 0; const n = 7 + Math.floor(rand(0, 5));
+      for (let i = 0; i < n; i++) {
+        const a = rand(0, 6.28), d = rand(0, 0.7), x0 = Math.cos(a) * d, z0 = Math.sin(a) * d, h = rand(3.0, 4.6), lx = rand(-0.25, 0.25), lz = rand(-0.25, 0.25);
+        for (let q = 0; q < 7; q++) {
+          const t0 = q / 7, t1 = (q + 1) / 7;
+          limb(x0 + lx * t0, -0.1 + h * t0, z0 + lz * t0, x0 + lx * t1, -0.1 + h * t1, z0 + lz * t1, 0.045);
+          tb.add(CYL, jc('#6f8a3a', 0.03), M(x0 + lx * t1, -0.1 + h * t1, z0 + lz * t1, 0, 0, 0, 0.05, 0.03, 0.05));
+        }
+        for (let k = 0; k < 3; k++) { const t = rand(0.55, 1.0); blob(x0 + lx * t + rand(-0.3, 0.3), -0.1 + h * t, z0 + lz * t + rand(-0.3, 0.3), rand(0.3, 0.42), 0.9); }
+      }
+      break;
+    }
     case 'giant': {
       // 巨杉：粗壮的红褐色树干、板根、纵向树皮纹，枝叶从半高处开始，整体呈不规则的圆锥
       cr = 0;
@@ -1667,7 +2008,7 @@ function buildTree(key) {
       break;
     }
   }
-  return { trunk: tb.mesh(vcMat, true), crown: cb.mesh(), cr, giant: sp.form === 'giant' };
+  return { trunk: tb.mesh(vcMat, true), crown: cb.mesh(), cr, giant: sp.form === 'giant', extra };
 }
 function recolorCrown(mesh, pal) {
   const g = mesh.geometry, jit = g.attributes.aJit, col = g.attributes.color, pos = g.attributes.position, cs = pal.map(h => new THREE.Color(h)), c = new THREE.Color();
@@ -1688,10 +2029,10 @@ function applyTreeSeason(e) {
   recolorCrown(e.crown, pal);
 }
 function spawnTree(x, z, kind, delay = 0) {
-  if (kind === 'mix') kind = Math.random() < 0.05 ? 'sequoia' : pick(Object.keys(SPECIES).filter(k => k !== 'sequoia'));
+  if (kind === 'mix') kind = ST.trees.includes('sequoia') && Math.random() < 0.05 ? 'sequoia' : pick(ST.trees.filter(k => k !== 'sequoia'));
   if (LEGACY_TREE[kind]) kind = pick(LEGACY_TREE[kind]);
   const e = makeEntity('tree', { block: true }), t = buildTree(kind), g = new THREE.Group();
-  g.add(t.trunk, t.crown); g.position.set(x, heightAt(x, z) - 0.05, z); g.rotation.y = rand(0, 6);
+  g.add(t.trunk, t.crown); if (t.extra) g.add(t.extra); g.position.set(x, heightAt(x, z) - 0.05, z); g.rotation.y = rand(0, 6);
   const sc = t.giant ? rand(0.92, 1.08) : rand(0.85, 1.2); g.scale.setScalar(sc);
   e.group.add(g); e.sway = g; e.ph = rand(0, 6); e.x = x; e.z = z; e.species = kind; e.crown = t.crown; e.cr = t.cr * sc;
   applyTreeSeason(e);
@@ -1919,6 +2260,7 @@ function addFern(b, base) {
   }
 }
 function spawnRock(x, z, delay = 0, big = 1) {
+  if (ST.rock !== 'mossy') return spawnRockAlt(x, z, delay, big);
   const e = makeEntity('rock', { block: true }); e.x = x; e.z = z;
   const b = new Builder(), s = rand(0.55, 1.1) * big;
   addRock(b, M(0, s * 0.25, 0, rand(0, 6), rand(-0.15, 0.15), rand(-0.15, 0.15), s * rand(1, 1.3), s * rand(0.6, 0.85), s), 0.85, Math.random() < 0.6 ? pick(CHUNKS) : null);
@@ -1941,6 +2283,51 @@ function spawnRock(x, z, delay = 0, big = 1) {
   return e;
 }
 
+// 魔法：发光水晶簇；未来：六棱玄武岩柱；和风：长苔的圆石和石灯笼
+function spawnRockAlt(x, z, delay = 0, big = 1) {
+  const e = makeEntity('rock', { block: true }); e.x = x; e.z = z;
+  const s = rand(0.55, 1.1) * big, b = new Builder(), cb = new Builder(), gb = new Builder();
+  let rad = s;
+  if (ST.rock === 'crystal') {
+    addRock(b, M(0, s * 0.1, 0, rand(0, 6), 0, 0, s * 1.1, s * 0.45, s), 0.3);
+    const cols = ['#b48cff', '#7fd8ff', '#ff9fe0'], col = pick(cols), n = 4 + Math.floor(rand(0, 4));
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, 6.28), d = rand(0, s * 0.5), hh = s * rand(0.9, 2.2), w = s * rand(0.18, 0.3);
+      cb.add(CRYSTAL, jc(i % 3 ? col : pick(cols), 0.05), M(Math.cos(a) * d, s * 0.15, -Math.sin(a) * d, a, 0, -rand(0.1, 0.45), w, hh, w));
+    }
+  } else if (ST.rock === 'basalt') {
+    const n = 5 + Math.floor(rand(0, 5));
+    for (let i = 0; i < n; i++) {
+      const a = i / n * 6.28 + rand(-0.3, 0.3), d = i === 0 ? 0 : s * rand(0.35, 0.6), hh = s * rand(0.4, 1.6), w = s * 0.3;
+      b.add(HEXC, jc(pick(['#5a6068', '#6a7078', '#7a828a']), 0.02), M(Math.cos(a) * d, -0.1, Math.sin(a) * d, rand(0, 1), 0, 0, w, hh, w));
+      if (Math.random() < 0.35) gb.add(HEX, neon(ST.accent, 2.2), M(Math.cos(a) * d, hh - 0.08, Math.sin(a) * d, 0, 0, 0, w * 0.6, 0.02, w * 0.6));
+    }
+  } else if (Math.random() < 0.45) {
+    // 石灯笼：台座、竿、火袋（亮着暖光）、笠、宝珠
+    rad = 0.5; const st = jc('#9a978e', 0.02);
+    b.add(HEX, st, M(0, 0.1, 0, 0, 0, 0, 0.42, 0.2, 0.42));
+    b.add(CYL, st, M(0, 0.6, 0, 0, 0, 0, 0.13, 0.85, 0.13));
+    b.add(HEX, st, M(0, 1.06, 0, 0, 0, 0, 0.32, 0.1, 0.32));
+    b.add(BOX, st, M(0, 1.3, 0, 0, 0, 0, 0.38, 0.38, 0.38));
+    for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) gb.add(BOX, neon('#ffb060', 2.0), M(sx * 0.195, 1.3, sz * 0.195, 0, 0, 0, sz ? 0.16 : 0.01, 0.16, sx ? 0.16 : 0.01));
+    b.add(CONE, st, M(0, 1.64, 0, 0, 0, 0, 0.55, 0.3, 0.55));
+    b.add(ICO, st, M(0, 1.86, 0, 0, 0, 0, 0.09, 0.11, 0.09));
+    for (let i = 0; i < 3; i++) addRock(b, M(Math.cos(i * 2.1) * 0.6, 0.02, Math.sin(i * 2.1) * 0.6, rand(0, 6), 0, 0, 0.18, 0.12, 0.16), 0.9);
+  } else {
+    addRock(b, M(0, s * 0.18, 0, rand(0, 6), rand(-0.1, 0.1), 0, s * rand(1.1, 1.4), s * rand(0.55, 0.75), s), 1.0);
+    for (let i = 0; i < 2; i++) { const a = rand(0, 6.28), d = s * rand(1.0, 1.4), ss = s * rand(0.25, 0.45); addRock(b, M(Math.cos(a) * d, ss * 0.2, Math.sin(a) * d, rand(0, 6), 0, 0, ss, ss * 0.7, ss), 0.9); }
+  }
+  const root = new THREE.Group(); root.position.set(x, heightAt(x, z) - 0.06, z);
+  if (b.parts.length) root.add(b.mesh(rockMat, true));
+  if (cb.parts.length) root.add(cb.mesh(glowVcMat, true));
+  if (gb.parts.length) root.add(gb.mesh(neonMat, false));
+  e.group.add(root);
+  e.dist = (px, pz) => Math.hypot(px - x, pz - z) - rad;
+  hideGrass(e, [x - 2 * s, z - 2 * s, x + 2 * s, z + 2 * s], (gx, gz) => Math.hypot(gx - x, gz - z) < rad * 0.9);
+  pop(root, delay, 0.5, 'stone');
+  return e;
+}
+
 // ================= 自然：池塘 =================
 // ================= 水域：像铺路一样涂抹，多笔自动连成一片 =================
 function sampleGrid(arr, x, z) {
@@ -1960,12 +2347,15 @@ const waterFx = (() => {
   scene.add(water, ice, peb);
   return { water, ice, peb, rocks: null, deco: null, cells: [] };
 })();
-function stampWater(e, p, rad, mode) {
+function stampWater(e, p, rad, mode, depth = S.waterDepth) {
   forCells(p.x - rad, p.z - rad, p.x + rad, p.z + rad, (x, z, k) => {
     if (Math.hypot(x, z) > R - 2.5) return;
     const f = smooth(rad, rad * 0.45, Math.hypot(x - p.x, z - p.z)); if (f <= 0) return;
     if (mode === 'fill') { const v = WM[k] * (1 - f); if (v < WM[k]) editGrid(e, 'WM', k, v - WM[k]); }
-    else if (f > WM[k]) editGrid(e, 'WM', k, f - WM[k]);
+    else {
+      if (f > WM[k]) editGrid(e, 'WM', k, f - WM[k]);
+      if (f > 0.05) { const nv = lerp(WDP[k], depth, f); if (Math.abs(nv - WDP[k]) > 0.001) editGrid(e, 'WDP', k, nv - WDP[k]); }
+    }
   });
 }
 function blurInto(src, dst, r) {
@@ -1979,13 +2369,13 @@ function blurInto(src, dst, r) {
     for (let j = 0; j < N; j++) { dst[j * N + i] = acc / w; acc += tmp[Math.min(N - 1, j + r + 1) * N + i] - tmp[Math.max(0, j - r) * N + i]; }
   }
 }
-const _wb = new Float32Array(NN), NB4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const _wdp = new Float32Array(NN), _wb = new Float32Array(NN), NB4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 // 每涂一笔都从整张遮罩重新算：挖地形、分出连通的水面、各自定水位、岸外垒土坎、水面网格、岸边装饰
 function rebuildWater(full) {
-  blurInto(WM, _wb, 2); blurInto(_wb, WB, 2);
+  blurInto(WM, _wb, 2); blurInto(_wb, WB, 2); blurInto(WDP, _wdp, 2);
   for (let k = 0; k < NN; k++) {
     const b = WB[k];
-    DW[k] = b > 0.01 ? -1.15 * smooth(0.22, 0.68, b) * (0.6 + 0.4 * smooth(0.7, 1, b)) : 0;
+    DW[k] = b > 0.01 ? -1.15 * _wdp[k] * smooth(0.22, 0.68, b) * (0.6 + 0.4 * smooth(0.7, 1, b)) : 0;
     H[k] = BASE[k] + D[k] + DW[k];
   }
   const lab = new Int32Array(NN).fill(-1), stack = [];
@@ -2039,7 +2429,7 @@ function rebuildWater(full) {
 }
 function buildWaterMesh() {
   const pos = new Float32Array(NN * 3), col = new Float32Array(NN * 3), ica = new Float32Array(NN * 4), uv = new Float32Array(NN * 2), nor = new Float32Array(NN * 3), idx = [];
-  const shallow = new THREE.Color('#dcebee'), deep = new THREE.Color('#7099aa'), c = new THREE.Color();
+  const shallow = new THREE.Color(ST.water[0]), deep = new THREE.Color(ST.water[1]), c = new THREE.Color();
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const k = j * N + i, x = gxy(i), z = gxy(j), lv = WLV[k];
     pos[k * 3] = x; pos[k * 3 + 1] = isNaN(lv) ? -50 : lv; pos[k * 3 + 2] = z; nor[k * 3 + 1] = 1;
@@ -2372,7 +2762,7 @@ const TOOLS = [
     begin(p) { S.stroke.acc = 99; S.stroke.timer = 0; this.move(p); },
     move(p) { const s = S.stroke; if (s.last) s.acc += Math.hypot(p.x - s.last.x, p.z - s.last.z); s.last = p; if (s.acc > 0.4) { s.acc = 0; brushSpawn(p, 1.1, 0.5, 'flower'); } },
     frame(dt) { const s = S.stroke; s.timer += dt; if (s.timer > 0.18 && s.last) { s.timer = 0; brushSpawn(s.last, 1.1, 0.5, 'flower'); } } },
-  { id: 'pond', name: '水域', get r() { return S.waterR; }, hint: '像铺路一样涂抹出水面，多涂几笔会连成一片、共用一个水位；石头只沿最外圈岸线摆放。选“填平”可以把水擦掉。',
+  { id: 'pond', name: '水域', get r() { return S.waterR; }, hint: '像铺路一样涂抹出水面，多涂几笔会连成一片、共用一个水位；石头只沿最外圈岸线摆放。在已有水面上用别的“水深”再涂一遍可以改深浅；选“填平”可以把水擦掉。',
     begin(p) { S.stroke.e = makeEntity('water'); S.stroke.last = null; S.stroke.t = 0; this.move(p); },
     move(p) {
       const st = S.stroke; if (st.last && Math.hypot(p.x - st.last.x, p.z - st.last.z) < 0.25) return;
@@ -2535,9 +2925,10 @@ function renderOptions() {
     }
     optEl.appendChild(g);
   }
-  if (S.tool === 'tree') optEl.appendChild(chipGroup('树种', [{ n: '混合', v: 'mix' }, ...Object.entries(SPECIES).map(([v, sp]) => ({ n: sp.name, v }))], S.tree, v => S.tree = v));
+  if (S.tool === 'tree') optEl.appendChild(chipGroup('树种', [{ n: '混合', v: 'mix' }, ...ST.trees.map(v => ({ n: SPECIES[v].name, v }))], S.tree, v => S.tree = v));
   if (S.tool === 'pond') {
     optEl.appendChild(chipGroup('方式', [{ n: '挖水', v: 'add' }, { n: '填平', v: 'fill' }], S.waterMode, v => S.waterMode = v));
+    optEl.appendChild(chipGroup('水深', [{ n: '浅', v: 0.5 }, { n: '中', v: 1.0 }, { n: '深', v: 1.8 }], S.waterDepth, v => S.waterDepth = v));
     optEl.appendChild(chipGroup('笔刷', [{ n: '小', v: 1.0 }, { n: '中', v: 1.7 }, { n: '大', v: 2.6 }], S.waterR, v => S.waterR = v));
   }
   if (S.tool === 'fish') optEl.appendChild(chipGroup('鱼种', [{ n: '随机', v: 'mix' }, ...Object.entries(FISH).map(([v, sp]) => ({ n: sp.name, v }))], S.fish, v => S.fish = v));
@@ -2604,7 +2995,7 @@ for (let i = 0; i < 16; i++) {
   const b = new Builder(), n = 6 + Math.floor(rand(0, 4));
   for (let k = 0; k < n; k++) { const sz = rand(2.2, 4.2); b.add(pick(BLOBS), '#ffffff', M((k - n / 2) * rand(2.2, 3), rand(-0.4, 1), rand(-1.6, 1.6), rand(0, 6), 0, 0, sz, sz * 0.6, sz)); }
   const m = b.mesh(cloudLayerMat, false); m.receiveShadow = false;
-  const a = i / 16 * Math.PI * 2 + rand(-0.2, 0.2), rr = rand(100, 130);
+  const a = i / 16 * Math.PI * 2 + rand(-0.2, 0.2), rr = rand(100, 130) * WS;
   m.position.set(Math.cos(a) * rr, rand(6, 34), Math.sin(a) * rr); m.rotation.y = rand(0, 6); m.userData.s = rand(2.0, 2.8);
   cloudLayer.add(m);
 }
@@ -2786,7 +3177,8 @@ function refreshLitter() {
 }
 function applySeason() {
   const sn = SEASON[S.season];
-  grassU.uTint.value.setRGB(...sn.grass); terrainU.uGrassTint.value.setRGB(...sn.grass);
+  const gt = sn.grass.map((v, i) => v * ST.grassTint[i]);
+  grassU.uTint.value.setRGB(...gt); terrainU.uGrassTint.value.setRGB(...gt);
   for (const md of meadow) md.inst.visible = !md.seasons || md.seasons.includes(S.season);
   for (const e of entities) {
     if (e.type === 'tree') applyTreeSeason(e);
@@ -2809,7 +3201,7 @@ function applyLook() {
   hemi.intensity = ENVB.hemi * (1 + 0.55 * c - 0.65 * st) + flashK * 3.5;
   hemi.color.copy(skyU.top.value).lerp(WHITE, 0.55);
   scene.fog.color.copy(skyU.hor.value);
-  scene.fog.near = lerp(85, 45, c); scene.fog.far = lerp(230, 140, c);
+  scene.fog.near = lerp(85, 45, c) * WS; scene.fog.far = lerp(230, 140, c) * WS;
   skyU.sunCol.value.copy(sun.color).multiplyScalar((night > 0.5 ? 0.25 : 1) * (1 - c));
   sunGlowK = ENVB.glow * (1 - c);
   pollen.m.opacity = ENVB.pollen * (1 - c);
@@ -2853,11 +3245,11 @@ function renderSide() {
 
 // ================= 时辰 =================
 const KEYS = [
-  { t: 0.00, top: '#8492c8', hor: '#f4c6b4', bot: '#d9b9c4', sun: '#ffb391', si: 1.7, hemi: 0.65, el: 7 },
-  { t: 0.25, top: '#8fb6e4', hor: '#f4e7d6', bot: '#d8d6e4', sun: '#fff0d8', si: 2.7, hemi: 1.1, el: 34 },
-  { t: 0.50, top: '#86b2e6', hor: '#eef1ee', bot: '#d4dcea', sun: '#fffaf0', si: 2.9, hemi: 1.15, el: 62 },
-  { t: 0.70, top: '#98a4da', hor: '#fbdcbc', bot: '#d9c4d6', sun: '#ffd09a', si: 2.9, hemi: 0.95, el: 24 },
-  { t: 0.86, top: '#6a69a8', hor: '#f2a891', bot: '#a988a6', sun: '#ff9d70', si: 1.4, hemi: 0.55, el: 5 },
+  { t: 0.00, top: '#6f8fd0', hor: '#ffd2b8', bot: '#e8c6c4', sun: '#ffb391', si: 1.7, hemi: 0.65, el: 7 },
+  { t: 0.25, top: '#3f8ce6', hor: '#b2d6f7', bot: '#c4dcf0', sun: '#fff0d8', si: 2.7, hemi: 1.1, el: 34 },
+  { t: 0.50, top: '#2f82e6', hor: '#acd4f8', bot: '#c0daf0', sun: '#fffaf0', si: 2.9, hemi: 1.15, el: 62 },
+  { t: 0.70, top: '#3a88e0', hor: '#b8d9f4', bot: '#c8dcec', sun: '#ffd8a8', si: 2.9, hemi: 0.95, el: 24 },
+  { t: 0.86, top: '#4b5fa6', hor: '#ffb08a', bot: '#c9a0a6', sun: '#ff9d70', si: 1.4, hemi: 0.55, el: 5 },
   { t: 1.00, top: '#1e2654', hor: '#4b5089', bot: '#2a2c55', sun: '#9fb4ff', si: 0.7, hemi: 0.4, el: 42 }
 ];
 const cA = new THREE.Color(), cB = new THREE.Color();
@@ -2874,7 +3266,7 @@ function applyTime(t) {
   hemi.color.copy(skyU.top.value).lerp(new THREE.Color('#ffffff'), 0.55);
   scene.fog.color.copy(skyU.hor.value);
   night = smooth(0.86, 0.98, t);
-  skyU.gnd.value.set('#55703a').multiplyScalar(lerp(1, 0.18, night));
+  skyU.gnd.value.set(ST ? ST.gnd : '#55703a').multiplyScalar(lerp(1, 0.18, night));
   envDirty = true;
   terrainU.uSun.value = (1 - night) * lerp(A.si, B.si, k) / 3;
   pollen.m.opacity = (1 - night) * 0.6;
@@ -2883,10 +3275,10 @@ function applyTime(t) {
   const el = THREE.MathUtils.degToRad(lerp(A.el, B.el, k));
   const az = night > 0.5 ? 2.2 : Math.PI * (1.35 - t);
   const dir = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
-  sun.position.copy(dir).multiplyScalar(60); sun.target.position.set(0, 0, 0);
+  sun.position.copy(dir).multiplyScalar(60 * WS); sun.target.position.set(0, 0, 0);
   skyU.sunDir.value.copy(dir); skyU.sunCol.value.copy(sc).multiplyScalar(night > 0.5 ? 0.25 : 1);
-  windowMat.emissiveIntensity = night * 2.2 + smooth(0.78, 0.9, t) * 0.6;
-  fireflies.m.opacity = night;
+  windowMat.emissiveIntensity = night * 2.2 + smooth(0.78, 0.9, t) * 0.6 + ((ST && ST.windowDay) || 0);
+  fireflies.m.opacity = Math.max(night, (ST && ST.motes) || 0);
   renderer.toneMappingExposure = lerp(1.0, 1.25, night);
   const names = [[0.12, '清晨'], [0.38, '上午'], [0.6, '正午'], [0.8, '午后'], [0.93, '日落'], [1.01, '夜晚']];
   document.getElementById('todName').textContent = names.find(n => t < n[0])[1];
@@ -2917,34 +3309,294 @@ applyTime(+todEl.value);
   addMeadow(geoOf(addCornflower), flowerMat, (x, z) => 0.004 * patch(x, z, 83), sc(1.1, 1.4), { seasons: SPR });
 }
 
-// ================= 初始小景 =================
-function seed() {
-  const arc = []; for (let a = 200; a <= 332; a += 6) { const r = a * Math.PI / 180; arc.push({ x: Math.cos(r) * 11, z: Math.sin(r) * 11 }); }
-  const pondE = makeEntity('water');
-  [[-10.6, 5.6], [-9.6, 6.3], [-8.5, 6.8], [-7.7, 7.6], [-9.0, 8.1], [-10.3, 7.3]].forEach(([x, z]) => stampWater(pondE, { x, z }, 2.0, 'add'));
-  rebuildWater(true);
-  ['koi', 'koi', 'gold', 'trout', 'bluegill'].forEach((k, i) => { const q = waterPoint(-9.2, 6.8, 2.5, 0.3); if (q) spawnFish(q.x, q.z, k, 3.2 + i * 0.15); });
-  buildWall(arc, 0.4, ROOFS[0].hex);
-  buildPath([{ x: -0.9, z: -3.4 }, { x: -1.6, z: -1.2 }, { x: -3.2, z: 1.2 }, { x: -5.2, z: 3.0 }, { x: -6.0, z: 3.4 }], 1.0);
-  buildPath([{ x: -2.0, z: -0.6 }, { x: 0.5, z: 0.6 }, { x: 2.8, z: 0.6 }, { x: 4.0, z: 0.0 }], 1.3);
-  buildHouse({ x: -3.2, z: -5.6 }, { x: 1.6, z: -6.1 }, 1.4, ROOFS[0].hex);
-  buildHouse({ x: 5.4, z: -3.6 }, { x: 7.4, z: 0.2 }, 1.8, ROOFS[2].hex);
-  buildHouse({ x: 2.2, z: 4.4 }, { x: 5.0, z: 5.0 }, 2.2, ROOFS[1].hex);
-  buildFence([{ x: 4, z: 9 }, { x: 7.5, z: 10.5 }, { x: 11, z: 10 }, { x: 13.5, z: 7.5 }], 2.4);
-  const trees = [
-    [-6, -15.5, 'pine'], [-2, -16.2, 'pine'], [3, -15.6, 'pine'], [7.6, -13.6, 'pine'], [-10.8, -12, 'pine'], [0.6, -18.5, 'pine'], [-4.5, -19, 'pine'], [5.2, -18.6, 'pine'],
-    [-15, -2, 'leaf'], [-17.2, 3, 'leaf'], [-14.2, 1.4, 'leaf'], [-18, -5, 'leaf'], [-16.4, -8.5, 'pine'],
-    [-12.5, 9.5, 'blossom'], [-5.6, 10.4, 'blossom'], [-11.8, 3.2, 'blossom'], [-8.4, 11.6, 'blossom'],
-    [15, 4, 'leaf'], [16.5, -1, 'leaf'], [14, -6, 'blossom'], [10.4, 14.5, 'leaf'], [3.4, 15.5, 'blossom'], [-2, 13.5, 'leaf'], [17, 8, 'pine']
-  ];
-  trees.forEach(([x, z, k], i) => spawnTree(x, z, k, 2.2 + i * 0.07));
-  [[-19.5, -10.5], [19.2, -10.8]].forEach(([x, z], i) => spawnTree(x, z, 'sequoia', 2.0 + i * 0.25));
-  [[-13.5, -7.5, 1.4], [12.5, -9.5, 1.1], [-4.6, 16.4, 1.0], [18.2, 2.2, 1.3], [-18.5, 9.5, 1.2], [9, 17.2, 0.9], [-7.6, -13.2, 0.8], [14.8, 12.6, 1.0], [0.8, 10.5, 0.6]]
-    .forEach(([x, z, bg], i) => spawnRock(x, z, 2.6 + i * 0.08, bg));
-  const fl = [[-6.2, 4.6], [-12.4, 6.6], [-10.6, 9.8], [-2.5, -3.4], [0.6, -3.5], [3.8, -1.6], [1.2, 2.3], [6.4, 6.8], [-1.0, 7.0], [-4.4, 8.6], [8.8, -1.4], [-7.8, -6.4]];
-  fl.forEach(([x, z], i) => spawnFlowers(x, z, 'mix', 3.0 + i * 0.05));
-  [[8, 13.2], [10.5, 12.8], [6.5, 14.2]].forEach(([x, z], i) => spawnSheep(x, z, 3.6 + i * 0.2));
+// ================= 场景风格 =================
+const STYLES = {
+  rustic: {
+    name: '田园', desc: '石砌城堡、木筋小屋和北美森林，四季分明的欧式乡间。', build: 'rustic',
+    terrain: { ox: 11.3, oz: -4.1, amp: 1.6, freq: 0.06, lift: 0.25 },
+    keys: KEYS.map(k => ({ ...k })),
+    stone: ['#d8cab0', '#cfc0a4', '#e3d7c0', '#c4b598', '#d6ccb8', '#bfb3a0'], stoneDark: '#a99d89', mortar: '#ada08b', cap: '#cbbfa8',
+    plaster: ['#f3ead8', '#efe3cc', '#f6eee0'], beam: '#6f4f36', pitch: 0.62, lean: 0, smoke: '#f2ede6',
+    cobble: ['#b3aa99', '#a09785', '#bdb4a2', '#8f8676', '#a89e8c', '#9a9182'], path: 'cobble', fence: 'wood', rock: 'mossy',
+    roofs: [{ name: '石板蓝', hex: '#5f72a3' }, { name: '青瓷', hex: '#4f9089' }, { name: '陶红', hex: '#c06548' }, { name: '琥珀', hex: '#c9984a' }, { name: '藕紫', hex: '#8b78ab' }],
+    trees: ['maple', 'redmaple', 'oak', 'birch', 'aspen', 'dogwood', 'redbud', 'sweetgum', 'spruce', 'whitepine', 'sequoia'],
+    grassTint: [1, 1, 1], water: ['#dcebee', '#7099aa', '#8fb3bd'], gnd: '#55703a',
+    rockA: '#68645c', rockB: '#8f897e', mossA: '#3b6620', mossB: '#6a922f',
+    windowColor: '#56688a', windowGlow: '#ffb45a', windowMetal: 0.65, windowRough: 0.04, windowDay: 0,
+    glow: 0, grassGlow: 0, motes: 0, firefly: '#ffe68a', css: '#b9d8f5', sheep: true
+  },
+  magic: {
+    name: '魔法', desc: '紫色尖顶的法师塔、会发光的符文和水晶，巨蘑菇与月光柳在暮色里闪烁。', build: 'magic',
+    terrain: { ox: 37.2, oz: 5.5, amp: 2.6, freq: 0.07, lift: 0.4 },
+    keys: [
+      { t: 0.00, top: '#5a4a9a', hor: '#f0a8c8', bot: '#b890c0', sun: '#ffb0d0', si: 1.6, hemi: 0.7, el: 7 },
+      { t: 0.25, top: '#4a6ad0', hor: '#c8d0f8', bot: '#c0c4e8', sun: '#fff0f8', si: 2.5, hemi: 1.1, el: 34 },
+      { t: 0.50, top: '#3f6ae0', hor: '#d0d8ff', bot: '#c8cef0', sun: '#fffaff', si: 2.7, hemi: 1.15, el: 60 },
+      { t: 0.70, top: '#5a58c8', hor: '#f4c0d8', bot: '#c8b0d8', sun: '#ffc8e0', si: 2.6, hemi: 1.0, el: 24 },
+      { t: 0.86, top: '#3a2f80', hor: '#e888b0', bot: '#8a6aa0', sun: '#ff90b0', si: 1.3, hemi: 0.6, el: 5 },
+      { t: 1.00, top: '#120c38', hor: '#3a2a78', bot: '#1a1440', sun: '#b8a0ff', si: 0.75, hemi: 0.5, el: 42 }
+    ],
+    stone: ['#6a6380', '#5e5874', '#77708c', '#56506c', '#6e6888', '#625c78'], stoneDark: '#4a4560', mortar: '#4e4864', cap: '#7a7290',
+    plaster: ['#e8dcc8', '#e2d4c0', '#ece2d0'], beam: '#3a2e40', pitch: 1.05, lean: 0.04, smoke: '#cbb8ff',
+    cobble: ['#8a82a0', '#7a7290', '#968eac', '#6e6888'], path: 'glow', pathGlow: ['#9f7bff', '#5fd8ff', '#ff7bd8'], fence: 'magic', rock: 'crystal',
+    roofs: [{ name: '夜紫', hex: '#5b3f9a' }, { name: '星蓝', hex: '#3f5ab0' }, { name: '玫瑰', hex: '#a8406f' }, { name: '苔绿', hex: '#3f7a6a' }, { name: '暗金', hex: '#b89a3a' }],
+    trees: ['moonwillow', 'crystaltree', 'mushroom', 'spiritoak', 'duskpine'],
+    grassTint: [0.72, 0.95, 1.18], water: ['#d8e8ff', '#4a6ad0', '#7f9af0'], gnd: '#3a4a6a',
+    rockA: '#4a4560', rockB: '#6a6380', mossA: '#3f8a80', mossB: '#5fb0a0',
+    windowColor: '#4a3a6a', windowGlow: '#d8a0ff', windowMetal: 0.5, windowRough: 0.08, windowDay: 0.35,
+    glow: 0.22, grassGlow: 0.06, motes: 0.55, firefly: '#c8a8ff', css: '#a8b0e8', sheep: false
+  },
+  scifi: {
+    name: '未来', desc: '白色模块建筑、霓虹灯带和玻璃穹顶，光纤树林沿着六边形地砖排开。', build: 'scifi', accent: '#3fe0ff',
+    terrain: { ox: 80, oz: 20, amp: 0.7, freq: 0.05, lift: 0.2 },
+    keys: [
+      { t: 0.00, top: '#3a5aa8', hor: '#ffc8a8', bot: '#c8b8c8', sun: '#ffb391', si: 1.7, hemi: 0.7, el: 7 },
+      { t: 0.25, top: '#2f88e8', hor: '#bfe6ff', bot: '#d0e4f4', sun: '#f4f8ff', si: 2.8, hemi: 1.1, el: 34 },
+      { t: 0.50, top: '#2a84f0', hor: '#c8eaff', bot: '#d4e8f6', sun: '#ffffff', si: 3.0, hemi: 1.15, el: 62 },
+      { t: 0.70, top: '#3080e0', hor: '#d0e8f8', bot: '#d8e6f0', sun: '#ffe0c0', si: 2.9, hemi: 1.0, el: 24 },
+      { t: 0.86, top: '#2a3a90', hor: '#ff9a80', bot: '#a08090', sun: '#ff9a70', si: 1.4, hemi: 0.6, el: 5 },
+      { t: 1.00, top: '#05102a', hor: '#0f2a50', bot: '#081830', sun: '#8fd0ff', si: 0.7, hemi: 0.45, el: 42 }
+    ],
+    stone: ['#e6eaee'], stoneDark: '#8a939c', mortar: '#c9d1d8', cap: '#d3dae0',
+    plaster: ['#eef1f3'], beam: '#9aa3ab', pitch: 0.4, lean: 0, smoke: '#e8f4f8',
+    cobble: ['#cfd5da', '#c2c9cf', '#d8dde1', '#b8c0c6'], path: 'hex', pathGlow: ['#3fe0ff'], fence: 'scifi', rock: 'basalt',
+    roofs: [{ name: '冷白', hex: '#e8eef2' }, { name: '银灰', hex: '#9aa6b0' }, { name: '青', hex: '#2fb8d0' }, { name: '橙', hex: '#f08a3a' }, { name: '石墨', hex: '#3a4048' }],
+    trees: ['cyberpine', 'orbtree', 'helix'],
+    grassTint: [0.82, 1.08, 1.0], water: ['#d8f6fa', '#2a9ab8', '#6fd0e0'], gnd: '#4a6a70',
+    rockA: '#5a6068', rockB: '#7a828a', mossA: '#5a8070', mossB: '#6a9080',
+    windowColor: '#6ab8d8', windowGlow: '#7fe8ff', windowMetal: 0.7, windowRough: 0.04, windowDay: 0.45,
+    glow: 0.16, grassGlow: 0.02, motes: 0, firefly: '#7fe8ff', css: '#a8d4f8', sheep: false
+  },
+  oriental: {
+    name: '和风', desc: '日式庭园：五重塔、深檐木屋与障子门，踏脚石穿过苔庭，樱花和云片松倒映在锦鲤池里。', build: 'oriental', wallTile: '#4a4f55', wallTowers: false,
+    terrain: { ox: 120.5, oz: -33, amp: 1.9, freq: 0.065, lift: 0.3 },
+    keys: [
+      { t: 0.00, top: '#7a90c8', hor: '#ffd8c0', bot: '#e8ccc4', sun: '#ffb391', si: 1.7, hemi: 0.7, el: 7 },
+      { t: 0.25, top: '#5a9ad8', hor: '#d8ecf4', bot: '#dde8ee', sun: '#fff4e0', si: 2.6, hemi: 1.1, el: 34 },
+      { t: 0.50, top: '#4a92e0', hor: '#dceefa', bot: '#dde9f2', sun: '#fffaf0', si: 2.8, hemi: 1.15, el: 62 },
+      { t: 0.70, top: '#5a98d8', hor: '#eee8dc', bot: '#e2e4e2', sun: '#ffd8a8', si: 2.8, hemi: 1.0, el: 24 },
+      { t: 0.86, top: '#4a5aa0', hor: '#f8b090', bot: '#c8a0a0', sun: '#ff9d70', si: 1.4, hemi: 0.55, el: 5 },
+      { t: 1.00, top: '#16203f', hor: '#3a4870', bot: '#202a48', sun: '#a8b8ff', si: 0.7, hemi: 0.4, el: 42 }
+    ],
+    stone: ['#9a978e', '#8d8a82', '#a6a399'], stoneDark: '#7d7a72', mortar: '#8a877e', cap: '#a8a59c',
+    plaster: ['#d9c7a0', '#d2be96', '#ddcca8'], beam: '#3a2a20', pitch: 0.48, lean: 0, smoke: '#efe8e0',
+    cobble: ['#8e8b84', '#a19e96', '#7f7c75', '#b0ada4'], path: 'stepping', fence: 'bamboo', rock: 'zen',
+    roofs: [{ name: '黛瓦', hex: '#4a4f55' }, { name: '桧皮', hex: '#6a4a3a' }, { name: '铜绿', hex: '#4f8a78' }, { name: '朱', hex: '#a8402f' }, { name: '青灰', hex: '#6a7a80' }],
+    trees: ['sakura', 'shidare', 'blackpine', 'japmaple', 'bamboo'],
+    grassTint: [0.9, 1.06, 0.86], water: ['#e2f0e4', '#4f8f78', '#7fb8a0'], gnd: '#4a6a3a',
+    rockA: '#7a786f', rockB: '#9a978d', mossA: '#3f6a28', mossB: '#5f8a34',
+    windowColor: '#efe6d0', windowGlow: '#ffb860', windowMetal: 0, windowRough: 0.9, windowDay: 0.05,
+    glow: 0, grassGlow: 0, motes: 0, firefly: '#ffe68a', css: '#bcd8f0', sheep: false
+  }
+};
+function applyStyle(key) {
+  ST = STYLES[key]; S.style = key;
+  STONE.splice(0, STONE.length, ...ST.stone); PLASTER.splice(0, PLASTER.length, ...ST.plaster);
+  COBBLE.splice(0, COBBLE.length, ...ST.cobble); ROOFS.splice(0, ROOFS.length, ...ST.roofs);
+  STONE_DARK = ST.stoneDark; MORTAR = ST.mortar; CAP = ST.cap;
+  S.roof = ROOFS[0].hex; if (S.tree !== 'mix' && !ST.trees.includes(S.tree)) S.tree = 'mix';
+  ROCK_A.set(ST.rockA); ROCK_B.set(ST.rockB); MOSS_A.set(ST.mossA); MOSS_B.set(ST.mossB);
+  KEYS.splice(0, KEYS.length, ...ST.keys);
+  waterMat.attenuationColor.set(ST.water[2]);
+  windowMat.color.set(ST.windowColor); windowMat.emissive.set(ST.windowGlow); windowMat.metalness = ST.windowMetal; windowMat.roughness = ST.windowRough;
+  glowU.value = ST.glow; grassGlowU.value = ST.grassGlow;
+  fireflies.m.color.set(ST.firefly);
+  document.documentElement.style.setProperty('--sky', ST.css);
+  applyTime(+todEl.value);
+  renderOptions(); renderScenes();
 }
+
+// ================= 场景布置 =================
+const sp = (x, z) => ({ x: x * WS, z: z * WS });
+const sps = arr => arr.map(([x, z]) => sp(x, z));
+function seedPond(pts, rad, depth, fish = []) {
+  const e = makeEntity('water');
+  pts.forEach(([x, z]) => stampWater(e, sp(x, z), rad, 'add', depth));
+  rebuildWater(true);
+  const c = { x: pts.reduce((a, q) => a + q[0], 0) / pts.length * WS, z: pts.reduce((a, q) => a + q[1], 0) / pts.length * WS };
+  fish.forEach((k, i) => { const q = waterPoint(c.x, c.z, 3, 0.3); if (q) spawnFish(q.x, q.z, k, 3.2 + i * 0.15); });
+}
+const seedTrees = (list, kind, d0 = 2.2) => list.forEach(([x, z], i) => spawnTree(x * WS, z * WS, kind, d0 + i * 0.06));
+const seedRocks = (list, d0 = 2.6) => list.forEach(([x, z, bg = 1], i) => spawnRock(x * WS, z * WS, d0 + i * 0.08, bg));
+const seedFlowers = (list, d0 = 3.0) => list.forEach(([x, z], i) => spawnFlowers(x * WS, z * WS, 'mix', d0 + i * 0.05));
+function ringPts(cx, cz, rx, rz, a0 = 0, a1 = 360, step = 6) { const out = []; for (let a = a0; a <= a1; a += step) { const r = a * Math.PI / 180; out.push([cx + Math.cos(r) * rx, cz + Math.sin(r) * rz]); } return out; }
+function rectPts(cx, cz, w, h) {
+  const c = [[cx - w / 2, cz - h / 2], [cx + w / 2, cz - h / 2], [cx + w / 2, cz + h / 2], [cx - w / 2, cz + h / 2]], out = [];
+  for (let i = 0; i < 4; i++) { const a = c[i], b = c[(i + 1) % 4], n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.8); for (let t = 0; t < n; t++) out.push([lerp(a[0], b[0], t / n), lerp(a[1], b[1], t / n)]); }
+  out.push(out[0]); return out;
+}
+const SEEDS = {
+  rustic() {
+    seedPond([[-10.6, 5.6], [-9.6, 6.3], [-8.5, 6.8], [-7.7, 7.6], [-9.0, 8.1], [-10.3, 7.3]], 2.0, 1.0, ['koi', 'koi', 'gold', 'trout', 'bluegill']);
+    buildWall(sps(ringPts(0, 0, 11, 11, 200, 332)), 0.4, ROOFS[0].hex);
+    buildPath(sps([[-0.9, -3.4], [-1.6, -1.2], [-3.2, 1.2], [-5.2, 3.0], [-6.0, 3.4]]), 1.0);
+    buildPath(sps([[-2.0, -0.6], [0.5, 0.6], [2.8, 0.6], [4.0, 0.0]]), 1.3);
+    buildHouse(sp(-3.2, -5.6), sp(1.6, -6.1), 1.4, ROOFS[0].hex);
+    buildHouse(sp(5.4, -3.6), sp(7.4, 0.2), 1.8, ROOFS[2].hex);
+    buildHouse(sp(2.2, 4.4), sp(5.0, 5.0), 2.2, ROOFS[1].hex);
+    buildFence(sps([[4, 9], [7.5, 10.5], [11, 10], [13.5, 7.5]]), 2.4);
+    seedTrees([[-6, -15.5], [-2, -16.2], [3, -15.6], [7.6, -13.6], [-10.8, -12], [0.6, -18.5], [-4.5, -19], [5.2, -18.6], [-16.4, -8.5], [17, 8]], 'pine');
+    seedTrees([[-15, -2], [-17.2, 3], [-14.2, 1.4], [-18, -5], [15, 4], [16.5, -1], [10.4, 14.5], [-2, 13.5]], 'leaf', 2.6);
+    seedTrees([[-12.5, 9.5], [-5.6, 10.4], [-11.8, 3.2], [-8.4, 11.6], [14, -6], [3.4, 15.5]], 'blossom', 3.0);
+    seedTrees([[-19.5, -10.5], [19.2, -10.8]], 'sequoia', 2.0);
+    seedRocks([[-13.5, -7.5, 1.4], [12.5, -9.5, 1.1], [-4.6, 16.4, 1.0], [18.2, 2.2, 1.3], [-18.5, 9.5, 1.2], [9, 17.2, 0.9], [-7.6, -13.2, 0.8], [14.8, 12.6, 1.0], [0.8, 10.5, 0.6]]);
+    seedFlowers([[-6.2, 4.6], [-12.4, 6.6], [-10.6, 9.8], [-2.5, -3.4], [0.6, -3.5], [3.8, -1.6], [1.2, 2.3], [6.4, 6.8], [-1.0, 7.0], [-4.4, 8.6], [8.8, -1.4], [-7.8, -6.4]]);
+    [[8, 13.2], [10.5, 12.8], [6.5, 14.2]].forEach(([x, z], i) => spawnSheep(x * WS, z * WS, 3.6 + i * 0.2));
+  },
+  magic() {
+    seedPond([[5.5, 6], [7, 7], [8.5, 6.2], [6.5, 4.8], [8, 8.6], [9.6, 7.2]], 2.3, 1.5, ['koi', 'gold', 'bluegill', 'koi']);
+    buildWall(sps(ringPts(-3, -5, 7.5, 6.5, 0, 360, 15)), 0.3, ROOFS[0].hex);
+    buildLoneTower(sp(-3, -5), 0.6);
+    buildHouse(sp(-8, -3.5), sp(-6.2, -1.6), 1.2, ROOFS[2].hex);
+    buildHouse(sp(0.3, -2.2), sp(2.2, -4.0), 1.5, ROOFS[1].hex);
+    buildHouse(sp(-6.5, -8.8), sp(-3.8, -9.4), 1.8, ROOFS[0].hex);
+    buildPath(sps([[-3, -2.0], [-2, 0.8], [0.5, 2.4], [3, 3.6], [4.4, 4.4]]), 1.1);
+    buildFence(sps([[10, 12], [13, 10.5], [15.5, 7.5]]), 2.0);
+    seedTrees([[10.8, 3.6], [3.2, 9.8], [11.5, 9.6], [3.6, 2.4]], 'moonwillow');
+    seedTrees([[-12, 6], [-9.5, 10], [-14.5, 2.5], [-6, 13]], 'mushroom', 2.5);
+    seedTrees([[-15, -11], [14, -7], [12, -14], [16, 2]], 'spiritoak', 2.8);
+    seedTrees([[-7, -16.5], [0, -17.5], [6, -16], [-12.5, -15], [3, -20], [-3, -21]], 'duskpine', 3.0);
+    seedTrees([[-16, 8], [0, 14], [16, -12]], 'crystaltree', 3.3);
+    seedRocks([[-10, 2], [8.5, -3.5], [-2, 9.5], [15, 5], [-17.5, -4], [7, 14]]);
+    seedFlowers([[-5, 6], [1, 6.5], [-12, -1], [11, -2], [-1, 12], [6, 11], [13, -4], [-8, 14], [9, -9], [-14, -6]]);
+  },
+  scifi() {
+    seedPond([[7, -1], [8.5, -1], [10, -1], [11.5, -1], [8, -2.5], [10.5, 0.5], [9, 0.8], [11, -2.6]], 1.6, 1.1, ['koi', 'gold', 'koi']);
+    buildWall(sps(rectPts(-4, -5, 15, 10)), 0.3, ROOFS[0].hex);
+    buildHouse(sp(-9, -7.2), sp(-5.2, -7.2), 1.2, ROOFS[2].hex);
+    buildHouse(sp(-2, -8), sp(1.5, -8), 1.4, ROOFS[0].hex);
+    buildHouse(sp(-8.5, -2.5), sp(-5.5, -2.5), 1.6, ROOFS[3].hex);
+    buildHouse(sp(-1.5, -2.2), sp(1.8, -2.2), 1.8, ROOFS[1].hex);
+    buildLoneTower(sp(12, -9), 1.0); buildLoneTower(sp(13, 7), 1.2);
+    buildPath(sps([[3.5, -5], [5.5, -3.2], [7, -2.4]]), 1.0);
+    buildPath(sps([[-4, 0.5], [-4, 3], [0, 6], [6, 6], [10, 4]]), 1.3);
+    buildFence(sps([[2, 9], [8, 10], [14, 9]]), 2.0); buildFence(sps([[-14, 4], [-14, 10], [-10, 13]]), 2.2);
+    seedTrees([[-16, 6], [-13, 6], [-16, 9], [-13, 9], [-10, 9], [-16, 12], [-13, 12], [-10, 15.5], [-4, 15]], 'cyberpine');
+    seedTrees([[4, 9.5], [7.5, 12.5], [11, 12], [16, 4], [15, -3], [-16, -6], [-14, -11], [2, -14], [-8, -14]], 'orbtree', 2.6);
+    seedTrees([[0, 12], [-6, 17], [9, 15], [17, -8], [6, -13]], 'helix', 3.0);
+    seedRocks([[3, 13], [-11, 16], [17, 9], [13, -13], [-17, -1]]);
+    seedFlowers([[1, 4], [-6, 4], [5, 3.5], [12, -6]]);
+  },
+  oriental() {
+    seedPond([[-6, 3], [-4.5, 4], [-3, 5.5], [-5, 6.2], [-7, 5], [-2, 3.8], [-8, 3.2], [-4, 2.4]], 2.2, 1.3, ['koi', 'koi', 'koi', 'koi', 'gold', 'koi']);
+    buildWall(sps(ringPts(0, -1.5, 12.5, 12.5, 198, 342)), 0.3, ROOFS[0].hex);
+    buildLoneTower(sp(-8.5, -7.5), 0.8);
+    buildHouse(sp(1, -7.5), sp(5.5, -7.5), 1.3, ROOFS[0].hex);
+    buildHouse(sp(-10.5, 0.2), sp(-8.6, -1.2), 1.6, ROOFS[1].hex);
+    buildHouse(sp(4.5, 1.5), sp(6.3, 3.4), 1.9, ROOFS[0].hex);
+    buildPath(sps([[3.2, -5.4], [2, -3], [0, -1], [-1.2, 1.0]]), 1.0);
+    buildPath(sps([[-1.2, 1.0], [0.4, 4], [0, 8], [-3, 10]]), 1.2);
+    buildPath(sps([[2, -3], [4.2, 0.4]]), 1.4);
+    buildFence(sps([[8, 10], [11, 9], [14, 6.5]]), 2.0);
+    seedTrees([[6, 6.5], [9.5, 3], [-0.5, 11.5], [3.5, 12]], 'sakura');
+    seedTrees([[-9.6, 8.6], [1.4, 6.8]], 'shidare', 2.4);
+    seedTrees([[-12.5, -12], [11, -11], [-3, -15.5], [3, -16.5], [12, 1], [-2.6, -4.2]], 'blackpine', 2.6);
+    seedTrees([[-15, -5], [-16.5, -1], [-13.5, -8.5], [15, -4], [16, -0.5]], 'bamboo', 2.9);
+    seedTrees([[8.5, 8.5], [-12, 4.5], [-6.5, 10.5]], 'japmaple', 3.2);
+    seedRocks([[-2.6, 1.2], [-8.7, 6.8], [-0.8, 6.8, 0.8], [-6, 1.4], [3.6, -3.6, 0.7], [7.6, -4.6, 0.8]]);
+    seedFlowers([[3, 4], [-11, -3], [7, -3], [10, 6], [-4, 9]]);
+  }
+};
+// 随机布置：水面、一段城墙或一圈院墙、几座房子和连接它们的小路、几片树林、石头和花
+function randomLayout() {
+  const used = [], ok = (x, z, r) => Math.hypot(x, z) < R - 2 - r && used.every(u => Math.hypot(u.x - x, u.z - z) > u.r + r);
+  const spot = (r, maxR = R - 3, c0 = { x: 0, z: 0 }) => {
+    for (let t = 0; t < 80; t++) { const a = rand(0, 6.28), d = Math.sqrt(Math.random()) * maxR, x = c0.x + Math.cos(a) * d, z = c0.z + Math.sin(a) * d; if (ok(x, z, r) && sampleGrid(WB, x, z) < 0.15) return { x, z }; }
+    return null;
+  };
+  const markLine = (pts, r) => pts.forEach(q => used.push({ x: q.x, z: q.z, r }));
+  const ponds = [];
+  for (let i = 0; i < 1 + (Math.random() < 0.45 ? 1 : 0); i++) {
+    const c = spot(4.5 * WS); if (!c) continue;
+    const e = makeEntity('water'), depth = pick([0.6, 1.0, 1.4]); let x = c.x, z = c.z;
+    for (let q = 0; q < 5 + Math.floor(rand(0, 5)); q++) { stampWater(e, { x, z }, rand(1.6, 2.4), 'add', depth); x += rand(-1.4, 1.4); z += rand(-1.4, 1.4); }
+    used.push({ x: c.x, z: c.z, r: 4.2 * WS }); ponds.push(c);
+  }
+  rebuildWater(true);
+  for (const c of ponds) for (let i = 0; i < 3 + Math.floor(rand(0, 3)); i++) { const q = waterPoint(c.x, c.z, 4, 0.3); if (q) spawnFish(q.x, q.z, 'mix', 3 + i * 0.15); }
+  const wc = spot(3, R * 0.45), houses = [];
+  if (wc) {
+    const ring = Math.random() < 0.4, rad = rand(6, 9) * WS, a0 = rand(0, 6.28), span = ring ? Math.PI * 2 : rand(1.8, 3.4), pts = [];
+    for (let t = 0; t <= 24; t++) { const a = a0 + span * t / 24, rr = rad * (1 + (noise(Math.cos(a) * 1.3 + a0, Math.sin(a) * 1.3) - 0.5) * 0.3); pts.push({ x: wc.x + Math.cos(a) * rr, z: wc.z + Math.sin(a) * rr }); }
+    if (pts.every(q => Math.hypot(q.x, q.z) < R - 2.5 && sampleGrid(WB, q.x, q.z) < 0.15)) { buildWall(pts, 0.4, pick(ROOFS).hex); markLine(pts, 1.3); }
+  }
+  for (let i = 0, n = 2 + Math.floor(rand(0, 3)); i < n; i++) {
+    const c = wc && Math.random() < 0.7 ? spot(2.6, 5 * WS, wc) : spot(2.6);
+    if (!c) continue;
+    const ang = rand(0, 6.28), len = rand(2.6, 5.6) * Math.min(WS, 1.2);
+    buildHouse({ x: c.x - Math.cos(ang) * len / 2, z: c.z - Math.sin(ang) * len / 2 }, { x: c.x + Math.cos(ang) * len / 2, z: c.z + Math.sin(ang) * len / 2 }, 1.2 + i * 0.3, pick(ROOFS).hex);
+    used.push({ x: c.x, z: c.z, r: len / 2 + 1.3 }); houses.push(c);
+  }
+  if (Math.random() < 0.5) { const c = spot(2); if (c) { buildLoneTower(c, 1.0); used.push({ x: c.x, z: c.z, r: 1.8 }); } }
+  for (let i = 1; i < houses.length; i++) {
+    const a = houses[i - 1], b = houses[i], d = Math.hypot(b.x - a.x, b.z - a.z); if (d < 5) continue;
+    const ux = (b.x - a.x) / d, uz = (b.z - a.z) / d, a2 = { x: a.x + ux * 2.4, z: a.z + uz * 2.4 }, b2 = { x: b.x - ux * 2.4, z: b.z - uz * 2.4 };
+    const m = { x: (a2.x + b2.x) / 2 + rand(-1.5, 1.5), z: (a2.z + b2.z) / 2 + rand(-1.5, 1.5) };
+    buildPath([a2, m, b2], 1.4 + i * 0.2); markLine(resample([a2, m, b2], 0.8), 0.9);
+  }
+  if (Math.random() < 0.7) {
+    const c = spot(2.5);
+    if (c) { const a0 = rand(0, 6.28), rad = rand(3, 5), pts = []; for (let t = 0; t <= 6; t++) pts.push({ x: c.x + Math.cos(a0 + t * 0.25) * rad, z: c.z + Math.sin(a0 + t * 0.25) * rad }); if (pts.every(q => ok(q.x, q.z, 0.5))) { buildFence(pts, 2.0); markLine(pts, 0.8); } }
+  }
+  let delay = 2.0;
+  for (let g = 0, n = 3 + Math.floor(rand(0, 3)); g < n; g++) {
+    const c = spot(2, R - 4); if (!c) continue;
+    const kind = pick(ST.trees.filter(k => k !== 'sequoia'));
+    for (let k = 0, m = 4 + Math.floor(rand(0, 5)); k < m; k++) {
+      const x = c.x + rand(-3.5, 3.5), z = c.z + rand(-3.5, 3.5);
+      if (ok(x, z, 0.9) && sampleGrid(WB, x, z) < 0.2) { spawnTree(x, z, Math.random() < 0.65 ? kind : 'mix', delay += 0.05); used.push({ x, z, r: 0.9 }); }
+    }
+  }
+  for (let i = 0; i < 12 * WS * WS; i++) { const c = spot(1.0); if (c) { spawnTree(c.x, c.z, 'mix', delay += 0.05); used.push({ x: c.x, z: c.z, r: 1.0 }); } }
+  for (let i = 0, n = 6 + Math.floor(rand(0, 5)); i < n; i++) { const c = spot(1.2); if (c) { spawnRock(c.x, c.z, 2.6 + i * 0.08, rand(0.7, 1.4)); used.push({ x: c.x, z: c.z, r: 1.3 }); } }
+  for (let i = 0; i < 14; i++) { const c = spot(0.6); if (c && S.season !== 'winter') spawnFlowers(c.x, c.z, 'mix', 3 + i * 0.05); }
+  if (ST.sheep) { const c = spot(2); if (c) for (let i = 0; i < 3; i++) spawnSheep(c.x + rand(-1.5, 1.5), c.z + rand(-1.5, 1.5), 3.6 + i * 0.2); }
+}
+
+// ================= 换场景 / 随机地形 =================
+function clearWorld() {
+  for (const e of entities) { scene.remove(e.group); e.group.traverse(o => { if (o.isMesh && o.userData.own) o.geometry.dispose(); }); }
+  entities.length = 0; tweens.length = 0; S.stroke = null; preview.visible = false;
+  D.fill(0); P.fill(0); WET.fill(0); WD.fill(0); WM.fill(0); WDP.fill(1); GHIDE.fill(0);
+  litterDirty = true;
+}
+function setTerrain(t) {
+  TER = t;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const k = j * N + i; BASE[k] = baseHeight(gxy(i), gxy(j)); H[k] = BASE[k]; }
+}
+const randomTerrain = () => ({ ox: rand(0, 200), oz: rand(0, 200), amp: rand(0.8, 3.0), freq: rand(0.045, 0.085), lift: rand(0.1, 0.5) });
+function loadScene(key, random) {
+  clearWorld();
+  applyStyle(key);
+  setTerrain(random ? randomTerrain() : ST.terrain);
+  rebuildWater(true);
+  if (random) randomLayout(); else SEEDS[key]();
+  applySeason();
+  envDirty = true;
+}
+function renderScenes() {
+  const el = document.getElementById('sceneChips'); el.innerHTML = '';
+  for (const [k, stl] of Object.entries(STYLES)) {
+    const c = document.createElement('button'); c.type = 'button'; c.className = 'chip' + (k === S.style ? ' on' : ''); c.textContent = stl.name;
+    c.title = stl.desc;
+    c.addEventListener('click', () => { ensureAudio(); loadScene(k, false); toast('换到「' + stl.name + '」场景'); });
+    el.appendChild(c);
+  }
+  document.getElementById('subtitle').textContent = ST.desc;
+}
+document.getElementById('reroll').addEventListener('click', () => { ensureAudio(); loadScene(S.style, true); toast('新的地形和布置已经长出来了'); });
+const sizeBtn = document.getElementById('sizeBtn'), SIZE_ORDER = ['small', 'normal', 'large'];
+let sizeArm = 0;
+sizeBtn.textContent = '岛屿：' + SIZE_NAME[WORLD];
+sizeBtn.addEventListener('click', () => {
+  const next = SIZE_ORDER[(SIZE_ORDER.indexOf(WORLD) + 1) % 3];
+  if (!sizeArm) {
+    sizeBtn.textContent = '换成' + SIZE_NAME[next] + '岛？再点一次'; sizeBtn.classList.add('warn');
+    sizeArm = setTimeout(() => { sizeArm = 0; sizeBtn.textContent = '岛屿：' + SIZE_NAME[WORLD]; sizeBtn.classList.remove('warn'); }, 2500);
+    return;
+  }
+  location.hash = next; location.reload();
+});
 
 // ================= 主循环 =================
 function resize() {
@@ -2974,9 +3626,11 @@ function frame(fixedDt) {
   for (const e of entities) {
     if (e.sway) { e.sway.rotation.z = Math.sin(perfT * 1.3 + e.ph) * 0.018; e.sway.rotation.x = Math.cos(perfT * 1.1 + e.ph) * 0.012; }
     for (const f of e.flags) { f.rotation.y = Math.sin(perfT * 2.6 + f.userData.ph) * 0.4; f.scale.x = 1 + Math.sin(perfT * 5 + f.userData.ph) * 0.08; }
-    for (const c of e.chimneys) { c.t += dt; if (c.t > 0.55) { c.t = 0; spawnPuff(c.x + rand(-0.05, 0.05), c.y, c.z, { color: '#f2ede6', size: 0.32, life: 3.6, vy: 0.45, vx: 0.22, vz: 0.08, grow: 2.6, opacity: 0.45 }); } }
+    for (const c of e.chimneys) { c.t += dt; if (c.t > 0.55) { c.t = 0; spawnPuff(c.x + rand(-0.05, 0.05), c.y, c.z, { color: c.col || '#f2ede6', size: 0.32, life: 3.6, vy: 0.45, vx: 0.22, vz: 0.08, grow: 2.6, opacity: 0.45 }); } }
     if (e.sheep) updateSheep(e, dt);
     if (e.fish) updateFish(e, dt);
+    if (e.spin) for (const sp of e.spin) sp.rotation.y += dt * 0.6;
+    if (e.blink) for (const bl of e.blink) bl.visible = (perfT * 1.2 + bl.userData.ph) % 1 < 0.45;
   }
   for (let i = puffs.length - 1; i >= 0; i--) {
     const p = puffs[i]; p.t += dt; const k = p.t / p.life;
@@ -3003,8 +3657,7 @@ function frame(fixedDt) {
   if (first) { first = false; document.getElementById('loading').classList.add('gone'); }
 }
 renderer.setAnimationLoop(() => frame());
-seed();
 renderSide();
-applySeason();
+loadScene('rustic', false);
 </script>
 </html>
