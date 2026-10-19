@@ -157,7 +157,10 @@
     <div class="btnrow">
       <button class="btn" id="undo" title="Ctrl+Z" aria-label="撤销">撤销</button>
       <button class="btn" id="clear">清空</button>
+    </div>
+    <div class="btnrow">
       <button class="btn" id="mute">声音：开</button>
+      <button class="btn" id="musicBtn" title="每种场景风格有自己的背景音乐">音乐：开</button>
     </div>
   </aside>
 
@@ -192,6 +195,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+let ST = null;   // 当前场景风格（STYLES 里的一项）
 
 // ================= 基础工具 =================
 const rand = (a = 0, b = 1) => a + Math.random() * (b - a);
@@ -702,18 +707,19 @@ float caustic(vec2 p, float t) {
   }
   return pow(1.0 - clamp(abs(c / 3.0), 0.0, 1.0), 7.0);
 }`;
-const terrainU = { tGrass: { value: texGrass }, tDirt: { value: texDirt }, tSand: { value: texSand }, uTime: { value: 0 }, uSun: { value: 1 }, uGrassTint: { value: new THREE.Color(1, 1, 1) }, uWet: { value: 0 } };
+const terrainU = { tGrass: { value: texGrass }, tDirt: { value: texDirt }, tSand: { value: texSand }, uTime: { value: 0 }, uSun: { value: 1 }, uGrassTint: { value: new THREE.Color(1, 1, 1) }, uWet: { value: 0 }, uDirtTint: { value: new THREE.Color(1, 1, 1) }, uSandTint: { value: new THREE.Color(1, 1, 1) }, uDirtGrey: { value: 0 } };
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0, envMapIntensity: 0.3 });
 terrainMat.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, terrainU);
   sh.vertexShader = 'attribute vec4 aMix;\nvarying vec4 vMix;\nvarying vec3 vTW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
     '#include <begin_vertex>\n vMix = aMix; vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-  sh.fragmentShader = 'uniform sampler2D tGrass; uniform sampler2D tDirt; uniform sampler2D tSand; uniform float uTime; uniform float uSun; uniform vec3 uGrassTint; uniform float uWet;\nvarying vec4 vMix;\nvarying vec3 vTW;\n' + CAUSTIC_GLSL + '\n' +
+  sh.fragmentShader = 'uniform sampler2D tGrass; uniform sampler2D tDirt; uniform sampler2D tSand; uniform float uTime; uniform float uSun; uniform vec3 uGrassTint; uniform float uWet; uniform vec3 uDirtTint; uniform vec3 uSandTint; uniform float uDirtGrey;\nvarying vec4 vMix;\nvarying vec3 vTW;\n' + CAUSTIC_GLSL + '\n' +
     sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
     vec2 tuv = vTW.xz * 0.3;
     vec3 gr = mix(texture2D(tGrass, tuv).rgb, texture2D(tGrass, tuv * 0.37 + 0.31).rgb, 0.4) * vColor.rgb * uGrassTint;
     vec3 di = mix(texture2D(tDirt, tuv * 1.2).rgb, texture2D(tDirt, tuv * 0.45 + 0.17).rgb, 0.3);
-    vec3 sa = texture2D(tSand, tuv * 1.15).rgb;
+    di = mix(di, vec3(dot(di, vec3(0.333))), uDirtGrey) * uDirtTint;
+    vec3 sa = texture2D(tSand, tuv * 1.15).rgb * uSandTint;
     vec3 al = mix(gr, di, vMix.x);
     al = mix(al, sa, vMix.y);
     al = mix(al, al * 0.85 + vec3(0.07, 0.07, 0.05), vMix.z);
@@ -826,6 +832,7 @@ const grass = new THREE.InstancedMesh(bladeGeo, grassMat, GN);
 grass.receiveShadow = true;
 grass.frustumCulled = false;
 const GX = new Float32Array(GN), GZ = new Float32Array(GN), GR = new Float32Array(GN), GS = new Float32Array(GN), GSH = new Float32Array(GN);
+const GD = new Float32Array(GN), GQ = new Float32Array(GN);   // 每根草的随机数：决定在疏草风格里是否显示、配哪种颜色
 const GHIDE = new Uint8Array(GN), GHIDEW = new Uint8Array(GN);
 const meadow = [];
 const BS = 2, NB = Math.ceil(2 * L / BS), buckets = Array.from({ length: NB * NB }, () => []);
@@ -836,7 +843,7 @@ const BS = 2, NB = Math.ceil(2 * L / BS), buckets = Array.from({ length: NB * NB
     const x = rand(-R, R), z = rand(-R, R);
     if (x * x + z * z > (R - 0.25) ** 2) continue;
     if (Math.random() > 0.45 + 0.55 * noise(x * 0.25, z * 0.25)) continue;
-    GX[k] = x; GZ[k] = z; GR[k] = rand(0, Math.PI * 2); GS[k] = rand(0.75, 1.3); GSH[k] = rand(0.6, 1.6);
+    GX[k] = x; GZ[k] = z; GR[k] = rand(0, Math.PI * 2); GS[k] = rand(0.75, 1.3); GSH[k] = rand(0.6, 1.6); GD[k] = Math.random(); GQ[k] = Math.random();
     c.set(pick(cols)).offsetHSL(0, 0, rand(-0.03, 0.03));
     grass.setColorAt(k, c);
     buckets[Math.floor((x + L) / BS) + Math.floor((z + L) / BS) * NB].push(k);
@@ -846,12 +853,12 @@ const BS = 2, NB = Math.ceil(2 * L / BS), buckets = Array.from({ length: NB * NB
 }
 function setGrass(k) {
   const y = heightAt(GX[k], GZ[k]);
-  if (GHIDE[k] || GHIDEW[k]) _m.makeScale(0, 0, 0);
-  else _m.compose(_p.set(GX[k], y - 0.02, GZ[k]), _q.setFromAxisAngle(UP, GR[k]), _s.set(GS[k], GS[k] * GSH[k], GS[k]));
+  if (GHIDE[k] || GHIDEW[k] || (ST && GD[k] > ST.grassDensity)) _m.makeScale(0, 0, 0);
+  else _m.compose(_p.set(GX[k], y - 0.02, GZ[k]), _q.setFromAxisAngle(UP, GR[k]), _s.set(GS[k], GS[k] * GSH[k] * (ST ? ST.grassH : 1), GS[k]));
   grass.setMatrixAt(k, _m);
   for (const md of meadow) {
     const i = md.idx[k]; if (i < 0) continue;
-    if (GHIDE[k] || GHIDEW[k]) _m.makeScale(0, 0, 0);
+    if (GHIDE[k] || GHIDEW[k] || (ST && md.seasons && GQ[k] > ST.meadowDensity)) _m.makeScale(0, 0, 0);
     else { _e.set(md.tilt[i * 2], GR[k] * 1.7, md.tilt[i * 2 + 1], 'YXZ'); _q.setFromEuler(_e); _m.compose(_p.set(GX[k] + 0.06, y + md.dy, GZ[k] + 0.04), _q, _s.set(md.sx[i], md.sy[i], md.sz[i])); }
     md.inst.setMatrixAt(i, _m);
   }
@@ -1049,8 +1056,142 @@ function sfx(kind) {
   else tone(n * 0.6, 'sine', 0.04, 0.12);
 }
 
+// ================= 背景音乐：每种风格一首，用 WebAudio 实时合成 =================
+// 田园：竖琴分解和弦 + 长笛；魔法：音乐盒铃声 + 人声般的长音；未来：合成器琶音 + 鼓点；和风：筝 + 尺八 + 风铃
+const MUSIC = { on: true, bus: null, style: 'rustic', next: 0, step: 0, mel: 4, noise: null };
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+function reverbIR(sec, decay) {
+  const n = Math.floor(actx.sampleRate * sec), b = actx.createBuffer(2, n, actx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay); }
+  return b;
+}
+function musicBus() {
+  if (MUSIC.bus) return MUSIC.bus;
+  const master = actx.createGain(); master.gain.value = 0; master.connect(actx.destination);
+  const input = actx.createGain(), dry = actx.createGain(); dry.gain.value = 0.8; input.connect(dry).connect(master);
+  const rev = actx.createConvolver(); rev.buffer = reverbIR(3.2, 2.4);
+  const wet = actx.createGain(); input.connect(rev); rev.connect(wet).connect(master);
+  const dly = actx.createDelay(1.5), fb = actx.createGain(), dlyOut = actx.createGain();
+  dly.delayTime.value = 0.42; fb.gain.value = 0.33; input.connect(dly); dly.connect(fb).connect(dly); dly.connect(dlyOut); dlyOut.connect(master); dlyOut.connect(rev);
+  MUSIC.noise = noiseBuffer(2);
+  MUSIC.bus = { master, input, wet, dlyOut, dly };
+  const tr = TRACKS[MUSIC.style]; wet.gain.value = tr.wet; dlyOut.gain.value = tr.delay; dly.delayTime.value = 60 / tr.bpm * 0.75;
+  return MUSIC.bus;
+}
+const mOsc = (type, f, t, end) => { const o = actx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f, t); o.start(t); o.stop(end + 0.05); return o; };
+const mGain = v => { const g = actx.createGain(); g.gain.value = v; return g; };
+function mEnv(g, t, a, peak, d) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); }
+function mFilter(type, f, q = 0.7) { const b = actx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; }
+function iPluck(t, m, vol, dec = 1.3, cut = 2600) {
+  const g = mGain(0), f = mFilter('lowpass', cut), o = mOsc('triangle', mtof(m), t, t + dec), o2 = mOsc('sine', mtof(m) * 2.001, t, t + dec), g2 = mGain(0.3);
+  f.frequency.setValueAtTime(cut, t); f.frequency.exponentialRampToValueAtTime(cut * 0.3, t + dec);
+  o.connect(f); o2.connect(g2).connect(f); f.connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.004, vol, dec);
+}
+function iKoto(t, m, vol) {
+  const f0 = mtof(m), g = mGain(0), f = mFilter('lowpass', 2200), o = mOsc('triangle', f0 * 1.015, t, t + 1.8), o2 = mOsc('sawtooth', f0, t, t + 0.7), g2 = mGain(0.18);
+  o.frequency.exponentialRampToValueAtTime(f0, t + 0.07);
+  f.frequency.setValueAtTime(2200, t); f.frequency.exponentialRampToValueAtTime(500, t + 1.2);
+  o.connect(f); o2.connect(g2).connect(f); f.connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.003, vol, 1.7);
+}
+function iBell(t, m, vol, dec = 2.4) {
+  const f0 = mtof(m);
+  for (const [r, a] of [[1, 1], [2.76, 0.32], [5.4, 0.1]]) { const o = mOsc('sine', f0 * r, t, t + dec), g = mGain(0); o.connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.003, vol * a, dec / r); }
+}
+function iFlute(t, m, dur, vol, breath = 0.15) {
+  const f0 = mtof(m), end = t + dur + 0.4, o = mOsc('sine', f0, t, end), lfo = mOsc('sine', 5.2, t, end), lg = mGain(f0 * 0.007), g = mGain(0);
+  lfo.connect(lg).connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.14); g.gain.setValueAtTime(vol, t + dur); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.35);
+  o.connect(g).connect(MUSIC.bus.input);
+  if (breath > 0) {
+    const n = actx.createBufferSource(), bp = mFilter('bandpass', f0, 6), ng = mGain(0);
+    n.buffer = MUSIC.noise; n.loop = true; n.start(t, rand(0, 1.5)); n.stop(end);
+    ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(vol * breath * 6, t + 0.08); ng.gain.setValueAtTime(vol * breath * 3, t + dur); ng.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.3);
+    n.connect(bp).connect(ng).connect(MUSIC.bus.input);
+  }
+}
+function iPad(t, ms, dur, vol, type = 'sine', cut = 1400) {
+  const f = mFilter('lowpass', cut), g = mGain(0);
+  for (const m of ms) for (const det of [-6, 6]) { const o = mOsc(type, mtof(m), t, t + dur + 2); o.detune.value = det; o.connect(f); }
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + Math.min(1.6, dur * 0.4)); g.gain.setValueAtTime(vol, t + dur); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 1.8);
+  f.connect(g).connect(MUSIC.bus.input);
+}
+function iBass(t, m, dur, vol, type = 'triangle') { const o = mOsc(type, mtof(m), t, t + dur), f = mFilter('lowpass', 420), g = mGain(0); o.connect(f).connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.01, vol, dur); }
+function iSaw(t, m, dur, vol, cut = 2400) {
+  const o = mOsc('sawtooth', mtof(m), t, t + dur), f = mFilter('lowpass', cut, 4), g = mGain(0);
+  f.frequency.setValueAtTime(cut, t); f.frequency.exponentialRampToValueAtTime(380, t + dur);
+  o.connect(f).connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.004, vol, dur);
+}
+function iKick(t, vol) { const o = mOsc('sine', 140, t, t + 0.4), g = mGain(0); o.frequency.exponentialRampToValueAtTime(42, t + 0.12); o.connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.002, vol, 0.32); }
+function iHat(t, vol, cut = 7000, dec = 0.05) { const n = actx.createBufferSource(), f = mFilter('highpass', cut), g = mGain(0); n.buffer = MUSIC.noise; n.start(t, rand(0, 1.5)); n.stop(t + dec + 0.05); n.connect(f).connect(g).connect(MUSIC.bus.input); mEnv(g, t, 0.001, vol, dec); }
+const TRACKS = {
+  rustic: { bpm: 84, wet: 0.38, delay: 0, step(s, t, e) {
+    const CH = [[62, 66, 69], [57, 61, 64], [59, 62, 66], [55, 59, 62]], c = CH[Math.floor(s / 16) % 4], b = s % 16;
+    if (b === 0) iPad(t, c.map(m => m - 12), e * 16, 0.016);
+    if (b % 8 === 0) iBass(t, c[0] - 24, e * 4, 0.14);
+    if (b % 8 === 4) iBass(t, c[0] - 17, e * 3, 0.09);
+    const arp = [0, 1, 2, 3, 2, 1, 2, 1], tones = [c[0], c[1], c[2], c[0] + 12];
+    iPluck(t, tones[arp[b % 8]], b % 4 === 0 ? 0.07 : 0.045);
+    if (b % 2 === 0 && Math.random() < (b % 4 === 0 ? 0.65 : 0.25)) {
+      const PENT = [66, 69, 71, 74, 76, 78, 81, 83];
+      MUSIC.mel = clamp(MUSIC.mel + Math.floor(rand(-2, 3)), 0, PENT.length - 1);
+      let m = PENT[MUSIC.mel];
+      if (b % 8 === 0) m = c.map(x => x + 12).reduce((a, x) => Math.abs(x - m) < Math.abs(a - m) ? x : a);
+      iFlute(t, m, e * (Math.random() < 0.5 ? 2 : 3.5), 0.045);
+    }
+  } },
+  magic: { bpm: 68, wet: 0.7, delay: 0.32, step(s, t, e) {
+    const CH = [[64, 68, 71, 75], [61, 64, 68, 73], [57, 61, 64, 68], [59, 63, 66, 71]], c = CH[Math.floor(s / 16) % 4], b = s % 16;
+    if (b === 0) { iPad(t, [c[0] - 12, ...c], e * 16, 0.018, 'sine', 900); iBass(t, c[0] - 24, e * 15, 0.09, 'sine'); }
+    const up = [0, 1, 2, 3, 2, 3, 1, 2];
+    if (Math.random() < 0.85) iBell(t, c[up[b % 8]] + (b >= 8 ? 24 : 12), 0.03, 2.2);
+    if (b === 14 && Math.random() < 0.5) for (let k = 0; k < 7; k++) iBell(t + k * e / 3.5, c[k % 4] + 24 + Math.floor(k / 4) * 12, 0.018, 1.4);
+    if (b % 8 === 4 && Math.random() < 0.5) iFlute(t, c[Math.floor(rand(0, 4))] + 12, e * 4, 0.022, 0.04);
+  } },
+  scifi: { bpm: 100, wet: 0.28, delay: 0.22, step(s, t, e) {
+    const CH = [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]], c = CH[Math.floor(s / 16) % 4], b = s % 16;
+    if (b === 0) iPad(t, c.map(m => m - 12), e * 16, 0.01, 'sawtooth', 700);
+    if (b % 4 === 0) iKick(t, 0.2);
+    if (b % 2 === 1) iHat(t, 0.022);
+    if (b % 8 === 4) iHat(t, 0.05, 1800, 0.12);
+    if (b % 2 === 0) iBass(t, c[0] - 24, e * 1.5, 0.11, 'sawtooth');
+    const tones = [c[0] + 12, c[1] + 12, c[2] + 12, c[0] + 24], cut = 1800 + 900 * Math.sin(s / 24);
+    iSaw(t, tones[(b * 2) % 4], e * 0.45, 0.026, cut); iSaw(t + e / 2, tones[(b * 2 + 1) % 4], e * 0.45, 0.02, cut);
+    if (b % 4 === 2 && Math.random() < 0.3) iFlute(t, pick([69, 72, 74, 76, 79]), e * 2, 0.026, 0);
+  } },
+  oriental: { bpm: 62, wet: 0.55, delay: 0.14, step(s, t, e) {
+    const IN = [62, 63, 67, 69, 70, 74, 75, 79, 81, 82, 86], b = s % 16, bar = Math.floor(s / 16);
+    if (s % 32 === 0) iPad(t, [50, 57, 62], e * 32, 0.012, 'sine', 600);
+    if (Math.random() < (b % 4 === 0 ? 0.5 : 0.16)) {
+      MUSIC.mel = clamp(MUSIC.mel + Math.floor(rand(-2, 3)), 0, IN.length - 1);
+      const m = IN[MUSIC.mel] - 12 + (Math.random() < 0.2 ? 12 : 0);
+      iKoto(t, m, 0.085);
+      if (Math.random() < 0.15) { iKoto(t + e * 0.25, m, 0.045); iKoto(t + e * 0.5, IN[Math.max(0, MUSIC.mel - 1)] - 12, 0.045); }
+    }
+    if (b === 0 && bar % 2 === 0 && Math.random() < 0.7) { const m = pick([67, 69, 70, 74, 75]); iFlute(t, m, e * rand(5, 9), 0.045, 0.35); }
+    if (Math.random() < 0.05) for (let k = 0; k < 3; k++) iBell(t + k * rand(0.08, 0.2), pick(IN) + 24, 0.01, 1.8);
+  } }
+};
+function musicTick() {
+  if (!actx || actx.state !== 'running') return;
+  const bus = musicBus(), tr = TRACKS[MUSIC.style], e = 30 / tr.bpm, now = actx.currentTime, on = MUSIC.on && !muted;
+  bus.master.gain.setTargetAtTime(on ? 0.5 : 0, now, 0.4);
+  if (!on) return;
+  if (MUSIC.next < now) MUSIC.next = now + 0.08;
+  while (MUSIC.next < now + 0.25) { tr.step(MUSIC.step, MUSIC.next, e); MUSIC.next += e; MUSIC.step++; }
+}
+setInterval(musicTick, 60);
+function setMusicStyle(key) {
+  if (MUSIC.style === key) return;
+  MUSIC.style = key; MUSIC.step = 0; MUSIC.mel = 4;
+  if (MUSIC.bus) {
+    const tr = TRACKS[key], now = actx.currentTime;
+    MUSIC.bus.wet.gain.setTargetAtTime(tr.wet, now, 0.5); MUSIC.bus.dlyOut.gain.setTargetAtTime(tr.delay, now, 0.5);
+    MUSIC.bus.dly.delayTime.setTargetAtTime(60 / tr.bpm * 0.75, now, 0.2);
+    MUSIC.next = now + 0.8;
+  }
+}
+
 // ================= 状态 =================
-let ST = null;   // 当前场景风格（STYLES 里的一项）
 const S = { style: 'rustic', waterDepth: 1.0, waterR: 1.7, waterMode: 'add', tool: 'wall', roof: ROOFS[0].hex, tree: 'mix', flower: 'mix', fish: 'mix', sculpt: 1, stroke: null, season: 'autumn', weather: 'sunny' };
 
 // ================= 建造：城墙与塔楼 =================
@@ -2962,6 +3103,8 @@ clearBtn.addEventListener('click', () => {
 });
 const muteBtn = document.getElementById('mute');
 muteBtn.addEventListener('click', () => { ensureAudio(); muted = !muted; muteBtn.textContent = muted ? '声音：关' : '声音：开'; });
+const musicBtn = document.getElementById('musicBtn');
+musicBtn.addEventListener('click', () => { ensureAudio(); MUSIC.on = !MUSIC.on; musicBtn.textContent = MUSIC.on ? '音乐：开' : '音乐：关'; });
 window.addEventListener('keydown', ev => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); undo(); return; }
   if (ev.key === 'Escape') { cancelStroke(); return; }
@@ -3177,8 +3320,8 @@ function refreshLitter() {
 }
 function applySeason() {
   const sn = SEASON[S.season];
-  const gt = sn.grass.map((v, i) => v * ST.grassTint[i]);
-  grassU.uTint.value.setRGB(...gt); terrainU.uGrassTint.value.setRGB(...gt);
+  grassU.uTint.value.setRGB(...sn.grass.map((v, i) => v * ST.bladeTint[i]));
+  terrainU.uGrassTint.value.setRGB(...sn.grass.map((v, i) => v * ST.groundTint[i]));
   for (const md of meadow) md.inst.visible = !md.seasons || md.seasons.includes(S.season);
   for (const e of entities) {
     if (e.type === 'tree') applyTreeSeason(e);
@@ -3389,6 +3532,33 @@ const STYLES = {
     glow: 0, grassGlow: 0, motes: 0, firefly: '#ffe68a', css: '#bcd8f0', sheep: false
   }
 };
+// 每种风格的地面：草的颜色、高矮、疏密，路面泥土和岸边沙地的色调，以及随机布局里各层用什么树
+Object.assign(STYLES.rustic, {
+  grassCols: ['#7fa646', '#93b752', '#6c9a3c', '#a6c25e', '#88ad4a', '#b4bf66'], bladeTint: [1, 1, 1], groundTint: [1, 1, 1],
+  grassH: 1, grassDensity: 1, meadowDensity: 1, dirtTint: [1, 1, 1], dirtGrey: 0, sandTint: [1, 1, 1],
+  roles: { edge: ['spruce', 'spruce', 'whitepine', 'whitepine', 'sequoia'], grove: ['maple', 'oak', 'birch', 'aspen', 'sweetgum', 'redmaple'], accent: ['dogwood', 'redbud', 'redmaple', 'birch'] }
+});
+Object.assign(STYLES.magic, {
+  grassCols: ['#5f8fa8', '#6f9cc0', '#5578a0', '#8a8fd0', '#6aa4b8', '#9a88d0'], bladeTint: [1, 1, 1], groundTint: [0.55, 0.75, 1.25],
+  grassH: 1.15, grassDensity: 0.95, meadowDensity: 0.8, dirtTint: [0.85, 0.75, 1.05], dirtGrey: 0.2, sandTint: [0.92, 0.86, 1.12],
+  roles: { edge: ['duskpine'], grove: ['spiritoak', 'moonwillow', 'crystaltree'], accent: ['mushroom', 'crystaltree', 'moonwillow'] }
+});
+Object.assign(STYLES.scifi, {
+  grassCols: ['#6fc08a', '#7fd09a', '#5fb07f', '#8fd8a8', '#74c896'], bladeTint: [1, 1, 1], groundTint: [0.85, 1.15, 1.0],
+  grassH: 0.55, grassDensity: 0.85, meadowDensity: 0.25, dirtTint: [1.35, 1.38, 1.42], dirtGrey: 0.85, sandTint: [1.15, 1.18, 1.2],
+  roles: { edge: ['cyberpine'], grove: ['orbtree', 'cyberpine'], accent: ['helix', 'orbtree'] }
+});
+Object.assign(STYLES.oriental, {
+  grassCols: ['#4f7a2e', '#5a8a34', '#466e2a', '#6a9a3c', '#557f30'], bladeTint: [1, 1, 1], groundTint: [0.78, 1.0, 0.68],
+  grassH: 0.5, grassDensity: 0.45, meadowDensity: 0.35, dirtTint: [1.5, 1.48, 1.4], dirtGrey: 0.9, sandTint: [1.1, 1.08, 1.0],
+  roles: { edge: ['blackpine', 'bamboo', 'blackpine'], grove: ['japmaple', 'bamboo', 'sakura'], accent: ['sakura', 'shidare', 'japmaple', 'blackpine'] }
+});
+function restyleGround() {
+  const c = new THREE.Color(), pal = ST.grassCols;
+  for (let k = 0; k < GN; k++) { c.set(pal[Math.floor(GQ[k] * pal.length) % pal.length]).offsetHSL(0, 0, (GD[k] - 0.5) * 0.06); grass.setColorAt(k, c); }
+  grass.instanceColor.needsUpdate = true;
+  terrainU.uDirtTint.value.setRGB(...ST.dirtTint); terrainU.uSandTint.value.setRGB(...ST.sandTint); terrainU.uDirtGrey.value = ST.dirtGrey;
+}
 function applyStyle(key) {
   ST = STYLES[key]; S.style = key;
   STONE.splice(0, STONE.length, ...ST.stone); PLASTER.splice(0, PLASTER.length, ...ST.plaster);
@@ -3402,6 +3572,8 @@ function applyStyle(key) {
   glowU.value = ST.glow; grassGlowU.value = ST.grassGlow;
   fireflies.m.color.set(ST.firefly);
   document.documentElement.style.setProperty('--sky', ST.css);
+  restyleGround();
+  setMusicStyle(key);
   applyTime(+todEl.value);
   renderOptions(); renderScenes();
 }
@@ -3497,60 +3669,122 @@ const SEEDS = {
     seedFlowers([[3, 4], [-11, -3], [7, -3], [10, 6], [-4, 9]]);
   }
 };
-// 随机布置：水面、一段城墙或一圈院墙、几座房子和连接它们的小路、几片树林、石头和花
+// 随机布置：按村落结构来摆——
+// 平地上的村子中心（小广场）→ 一侧的池塘 → 村后半包围的城墙（开口朝池塘）→ 绕广场的房屋（门朝广场）
+// → 广场通往各家门口和池边的小路 → 高处的塔 → 远离村子的牧场 → 外圈林带、中圈树林、池边和屋旁的观赏树 → 石头和花
 function randomLayout() {
-  const used = [], ok = (x, z, r) => Math.hypot(x, z) < R - 2 - r && used.every(u => Math.hypot(u.x - x, u.z - z) > u.r + r);
-  const spot = (r, maxR = R - 3, c0 = { x: 0, z: 0 }) => {
-    for (let t = 0; t < 80; t++) { const a = rand(0, 6.28), d = Math.sqrt(Math.random()) * maxR, x = c0.x + Math.cos(a) * d, z = c0.z + Math.sin(a) * d; if (ok(x, z, r) && sampleGrid(WB, x, z) < 0.15) return { x, z }; }
-    return null;
-  };
-  const markLine = (pts, r) => pts.forEach(q => used.push({ x: q.x, z: q.z, r }));
-  const ponds = [];
-  for (let i = 0; i < 1 + (Math.random() < 0.45 ? 1 : 0); i++) {
-    const c = spot(4.5 * WS); if (!c) continue;
-    const e = makeEntity('water'), depth = pick([0.6, 1.0, 1.4]); let x = c.x, z = c.z;
-    for (let q = 0; q < 5 + Math.floor(rand(0, 5)); q++) { stampWater(e, { x, z }, rand(1.6, 2.4), 'add', depth); x += rand(-1.4, 1.4); z += rand(-1.4, 1.4); }
-    used.push({ x: c.x, z: c.z, r: 4.2 * WS }); ponds.push(c);
+  const used = [];
+  const inIsland = (x, z, m = 2.5) => Math.hypot(x, z) < R - m;
+  const wet = (x, z) => sampleGrid(WB, x, z) > 0.12;
+  const free = (x, z, r) => inIsland(x, z, 2 + r) && !wet(x, z) && used.every(u => Math.hypot(u.x - x, u.z - z) > u.r + r);
+  const mark = (x, z, r) => used.push({ x, z, r });
+  const markLine = (pts, r) => resample(pts, 0.7).forEach(q => mark(q.x, q.z, r));
+  const slope = (x, z, r) => { let lo = Infinity, hi = -Infinity; for (let a = 0; a < 6.28; a += 1.05) { const h = heightAt(x + Math.cos(a) * r, z + Math.sin(a) * r); lo = Math.min(lo, h); hi = Math.max(hi, h); } return hi - lo; };
+  const roles = ST.roles, tryTree = (x, z, kind, d, r = 1.0) => { if (!free(x, z, r)) return false; spawnTree(x, z, kind, d); mark(x, z, r); return true; };
+  let delay = 0.3;
+  // 1. 村子中心：在中部挑一块最平的地
+  let C = { x: 0, z: 0 }, best = Infinity;
+  for (let t = 0; t < 40; t++) { const a = rand(0, 6.28), d = Math.sqrt(Math.random()) * R * 0.28, x = Math.cos(a) * d, z = Math.sin(a) * d, sc = slope(x, z, 5 * WS) + d * 0.02; if (sc < best) { best = sc; C = { x, z }; } }
+  const villR = rand(4.3, 5.3) * WS;
+  // 2. 池塘：放在村子一侧，用几笔连续涂抹出不规则的形状
+  let Pd = null;
+  for (let t = 0; t < 16 && !Pd; t++) { const a = rand(0, 6.28), d = rand(9.5, 12) * WS, x = C.x + Math.cos(a) * d, z = C.z + Math.sin(a) * d; if (inIsland(x, z, 7 * WS)) Pd = { x, z, a }; }
+  if (Pd) {
+    const e = makeEntity('water'), depth = pick([0.7, 1.0, 1.3]), lim = 3.2 * WS; let x = Pd.x, z = Pd.z;
+    for (let q = 0, n = 6 + Math.floor(rand(0, 4)); q < n; q++) {
+      stampWater(e, { x, z }, rand(1.7, 2.3) * Math.min(WS, 1.3), 'add', depth);
+      x = Pd.x + clamp(x - Pd.x + rand(-1.3, 1.3), -lim, lim); z = Pd.z + clamp(z - Pd.z + rand(-1.3, 1.3), -lim, lim);
+    }
+    rebuildWater(true);
   }
-  rebuildWater(true);
-  for (const c of ponds) for (let i = 0; i < 3 + Math.floor(rand(0, 3)); i++) { const q = waterPoint(c.x, c.z, 4, 0.3); if (q) spawnFish(q.x, q.z, 'mix', 3 + i * 0.15); }
-  const wc = spot(3, R * 0.45), houses = [];
-  if (wc) {
-    const ring = Math.random() < 0.4, rad = rand(6, 9) * WS, a0 = rand(0, 6.28), span = ring ? Math.PI * 2 : rand(1.8, 3.4), pts = [];
-    for (let t = 0; t <= 24; t++) { const a = a0 + span * t / 24, rr = rad * (1 + (noise(Math.cos(a) * 1.3 + a0, Math.sin(a) * 1.3) - 0.5) * 0.3); pts.push({ x: wc.x + Math.cos(a) * rr, z: wc.z + Math.sin(a) * rr }); }
-    if (pts.every(q => Math.hypot(q.x, q.z) < R - 2.5 && sampleGrid(WB, q.x, q.z) < 0.15)) { buildWall(pts, 0.4, pick(ROOFS).hex); markLine(pts, 1.3); }
+  mark(C.x, C.z, 1.8 * WS);
+  // 3. 城墙：在村子背后半包围，开口朝向池塘；院墙式留一道朝池塘的门
+  const toward = Pd ? Pd.a : rand(0, 6.28), back = toward + Math.PI;
+  const ring = Math.random() < (ST.build === 'oriental' ? 0.6 : 0.35);
+  for (const k0 of [rand(8.2, 9.5), 7.6, 7.0]) {
+    const rad = k0 * WS, span = ring ? Math.PI * 2 - 0.75 : rand(2.6, 3.7), pts = [];
+    for (let t = 0; t <= 30; t++) { const a = back - span / 2 + span * t / 30, rr = rad * (1 + (noise(Math.cos(a) * 1.2 + 9, Math.sin(a) * 1.2) - 0.5) * 0.16); pts.push({ x: C.x + Math.cos(a) * rr, z: C.z + Math.sin(a) * rr }); }
+    if (pts.every(q => inIsland(q.x, q.z, 2.6) && !wet(q.x, q.z))) { buildWall(pts, delay, ROOFS[0].hex); markLine(pts, 1.2); break; }
   }
-  for (let i = 0, n = 2 + Math.floor(rand(0, 3)); i < n; i++) {
-    const c = wc && Math.random() < 0.7 ? spot(2.6, 5 * WS, wc) : spot(2.6);
-    if (!c) continue;
-    const ang = rand(0, 6.28), len = rand(2.6, 5.6) * Math.min(WS, 1.2);
-    buildHouse({ x: c.x - Math.cos(ang) * len / 2, z: c.z - Math.sin(ang) * len / 2 }, { x: c.x + Math.cos(ang) * len / 2, z: c.z + Math.sin(ang) * len / 2 }, 1.2 + i * 0.3, pick(ROOFS).hex);
-    used.push({ x: c.x, z: c.z, r: len / 2 + 1.3 }); houses.push(c);
-  }
-  if (Math.random() < 0.5) { const c = spot(2); if (c) { buildLoneTower(c, 1.0); used.push({ x: c.x, z: c.z, r: 1.8 }); } }
-  for (let i = 1; i < houses.length; i++) {
-    const a = houses[i - 1], b = houses[i], d = Math.hypot(b.x - a.x, b.z - a.z); if (d < 5) continue;
-    const ux = (b.x - a.x) / d, uz = (b.z - a.z) / d, a2 = { x: a.x + ux * 2.4, z: a.z + uz * 2.4 }, b2 = { x: b.x - ux * 2.4, z: b.z - uz * 2.4 };
-    const m = { x: (a2.x + b2.x) / 2 + rand(-1.5, 1.5), z: (a2.z + b2.z) / 2 + rand(-1.5, 1.5) };
-    buildPath([a2, m, b2], 1.4 + i * 0.2); markLine(resample([a2, m, b2], 0.8), 0.9);
-  }
-  if (Math.random() < 0.7) {
-    const c = spot(2.5);
-    if (c) { const a0 = rand(0, 6.28), rad = rand(3, 5), pts = []; for (let t = 0; t <= 6; t++) pts.push({ x: c.x + Math.cos(a0 + t * 0.25) * rad, z: c.z + Math.sin(a0 + t * 0.25) * rad }); if (pts.every(q => ok(q.x, q.z, 0.5))) { buildFence(pts, 2.0); markLine(pts, 0.8); } }
-  }
-  let delay = 2.0;
-  for (let g = 0, n = 3 + Math.floor(rand(0, 3)); g < n; g++) {
-    const c = spot(2, R - 4); if (!c) continue;
-    const kind = pick(ST.trees.filter(k => k !== 'sequoia'));
-    for (let k = 0, m = 4 + Math.floor(rand(0, 5)); k < m; k++) {
-      const x = c.x + rand(-3.5, 3.5), z = c.z + rand(-3.5, 3.5);
-      if (ok(x, z, 0.9) && sampleGrid(WB, x, z) < 0.2) { spawnTree(x, z, Math.random() < 0.65 ? kind : 'mix', delay += 0.05); used.push({ x, z, r: 0.9 }); }
+  // 4. 房屋：均匀绕着广场，留出通往池塘的方向，屋脊沿切线，门朝广场
+  const houses = [], nh = 3 + Math.floor(rand(0, 3)), phi0 = toward + Math.PI / nh;
+  for (let i = 0; i < nh; i++) {
+    for (let t = 0; t < 12; t++) {
+      const phi = phi0 + i * Math.PI * 2 / nh + (t ? (t % 2 ? 1 : -1) * Math.ceil(t / 2) * 0.22 : 0);
+      if (Pd && Math.abs(Math.atan2(Math.sin(phi - toward), Math.cos(phi - toward))) < 0.5) continue;
+      const rr = villR * rand(0.95, 1.12), hx = C.x + Math.cos(phi) * rr, hz = C.z + Math.sin(phi) * rr, len = rand(2.6, 4.6) * Math.min(WS, 1.15);
+      if (!free(hx, hz, len / 2 + 0.6) || slope(hx, hz, len / 2) > 1.5) continue;
+      let dx = -Math.sin(phi), dz = Math.cos(phi);
+      const th = yaw(dx, dz);
+      if (Math.sin(th) * -Math.cos(phi) + Math.cos(th) * -Math.sin(phi) < 0) { dx = -dx; dz = -dz; }
+      buildHouse({ x: hx - dx * len / 2, z: hz - dz * len / 2 }, { x: hx + dx * len / 2, z: hz + dz * len / 2 }, delay += 0.22, pick(ROOFS).hex);
+      mark(hx, hz, len / 2 + 1.0);
+      houses.push({ x: hx, z: hz, phi, rr });
+      break;
     }
   }
-  for (let i = 0; i < 12 * WS * WS; i++) { const c = spot(1.0); if (c) { spawnTree(c.x, c.z, 'mix', delay += 0.05); used.push({ x: c.x, z: c.z, r: 1.0 }); } }
-  for (let i = 0, n = 6 + Math.floor(rand(0, 5)); i < n; i++) { const c = spot(1.2); if (c) { spawnRock(c.x, c.z, 2.6 + i * 0.08, rand(0.7, 1.4)); used.push({ x: c.x, z: c.z, r: 1.3 }); } }
-  for (let i = 0; i < 14; i++) { const c = spot(0.6); if (c && S.season !== 'winter') spawnFlowers(c.x, c.z, 'mix', 3 + i * 0.05); }
-  if (ST.sheep) { const c = spot(2); if (c) for (let i = 0; i < 3; i++) spawnSheep(c.x + rand(-1.5, 1.5), c.z + rand(-1.5, 1.5), 3.6 + i * 0.2); }
+  // 5. 小路：广场一圈，广场到各家门口，广场到池边
+  const plaza = [], pr = 1.5 * WS;
+  for (let t = 0; t <= 16; t++) { const a = t / 16 * Math.PI * 2; plaza.push({ x: C.x + Math.cos(a) * pr, z: C.z + Math.sin(a) * pr }); }
+  buildPath(plaza, delay += 0.2);
+  for (const h of houses) {
+    const ux = Math.cos(h.phi), uz = Math.sin(h.phi), d0 = pr, d1 = h.rr - 2.0;
+    if (d1 - d0 < 0.6) continue;
+    const pts = [{ x: C.x + ux * d0, z: C.z + uz * d0 }, { x: C.x + ux * (d0 + d1) / 2 - uz * rand(-0.4, 0.4), z: C.z + uz * (d0 + d1) / 2 + ux * rand(-0.4, 0.4) }, { x: C.x + ux * d1, z: C.z + uz * d1 }];
+    buildPath(pts, delay += 0.1); markLine(pts, 0.8);
+  }
+  if (Pd) {
+    const ux = Math.cos(toward), uz = Math.sin(toward); let d = pr;
+    while (d < 16 * WS && !wet(C.x + ux * (d + 1.2), C.z + uz * (d + 1.2))) d += 0.4;
+    if (d - pr > 1) {
+      const pts = [];
+      for (let t = 0; t <= 4; t++) { const dd = lerp(pr, d, t / 4), w = Math.sin(t / 4 * Math.PI) * rand(0.4, 1.0); pts.push({ x: C.x + ux * dd - uz * w, z: C.z + uz * dd + ux * w }); }
+      buildPath(pts, delay += 0.15); markLine(pts, 0.9);
+    }
+  }
+  // 6. 塔：村外找一处最高的空地
+  let tw = null, hiH = -Infinity;
+  for (let t = 0; t < 40; t++) { const a = rand(0, 6.28), d = rand(10, 15) * WS, x = C.x + Math.cos(a) * d, z = C.z + Math.sin(a) * d; if (free(x, z, 2) && heightAt(x, z) > hiH) { hiH = heightAt(x, z); tw = { x, z }; } }
+  if (tw && (ST.wallTowers === false || Math.random() < 0.6)) { buildLoneTower(tw, delay += 0.2); mark(tw.x, tw.z, 2.2); }
+  // 7. 牧场（田园）：在村子侧后方圈一片，羊在里面
+  if (ST.sheep) {
+    for (const side of [1, -1]) {
+      const a = back + side * Math.PI / 2.2, d = rand(11, 14) * WS, px = C.x + Math.cos(a) * d, pz = C.z + Math.sin(a) * d;
+      if (!free(px, pz, 4)) continue;
+      const pts = [], a0 = a + Math.PI * 0.75;
+      for (let t = 0; t <= 9; t++) { const b = a0 + t / 9 * Math.PI * 1.4; pts.push({ x: px + Math.cos(b) * 3.6, z: pz + Math.sin(b) * 3.6 }); }
+      if (!pts.every(q => inIsland(q.x, q.z, 2.5) && !wet(q.x, q.z))) continue;
+      buildFence(pts, delay += 0.2); mark(px, pz, 4.2);
+      for (let i = 0; i < 3; i++) spawnSheep(px + rand(-1.5, 1.5), pz + rand(-1.5, 1.5), 3.6 + i * 0.2);
+      break;
+    }
+  }
+  // 8. 树：外圈林带（偏向村后），中圈几片树林，池边和屋旁的观赏树
+  let d0 = 2.0;
+  const belt = Math.round(24 * WS * WS);
+  for (let i = 0, n = 0; i < belt * 4 && n < belt; i++) {
+    const a = Math.random() < 0.6 ? back + rand(-1.5, 1.5) : rand(0, 6.28), d = rand(R - 7, R - 2.8);
+    if (tryTree(Math.cos(a) * d, Math.sin(a) * d, pick(Math.random() < 0.65 ? roles.edge : roles.grove), d0 += 0.03)) n++;
+  }
+  for (let g = 0, ng = 2 + Math.floor(rand(0, 2)); g < ng; g++) {
+    const a = rand(0, 6.28), d = rand(12, 17) * WS, gx = C.x + Math.cos(a) * d, gz = C.z + Math.sin(a) * d, kind = pick(roles.grove);
+    for (let k = 0; k < 7; k++) tryTree(gx + rand(-3, 3), gz + rand(-3, 3), Math.random() < 0.75 ? kind : pick(roles.grove), d0 += 0.04);
+  }
+  if (Pd) for (let k = 0, n = 0; k < 30 && n < 4; k++) { const a = rand(0, 6.28), d = rand(3.8, 5.8) * WS; if (tryTree(Pd.x + Math.cos(a) * d, Pd.z + Math.sin(a) * d, pick(roles.accent), d0 += 0.05)) n++; }
+  for (let k = 0, n = 0; k < 30 && n < 4; k++) { const a = rand(0, 6.28), d = villR + rand(2.2, 3.6); if (tryTree(C.x + Math.cos(a) * d, C.z + Math.sin(a) * d, pick(roles.accent), d0 += 0.05)) n++; }
+  // 9. 石头：池边和林边
+  if (Pd) for (let k = 0, n = 0; k < 30 && n < 3; k++) { const a = rand(0, 6.28), d = rand(3.6, 5) * WS, x = Pd.x + Math.cos(a) * d, z = Pd.z + Math.sin(a) * d; if (free(x, z, 1.2)) { spawnRock(x, z, 2.6 + n * 0.1, rand(0.7, 1.2)); mark(x, z, 1.3); n++; } }
+  for (let k = 0, n = 0; k < 40 && n < 4; k++) { const a = rand(0, 6.28), d = rand(R - 9, R - 4), x = Math.cos(a) * d, z = Math.sin(a) * d; if (free(x, z, 1.2)) { spawnRock(x, z, 2.9 + n * 0.1, rand(0.8, 1.4)); mark(x, z, 1.3); n++; } }
+  // 10. 花：门前、广场边、池边
+  if (S.season !== 'winter') {
+    const spots = [];
+    houses.forEach(h => { for (const sd of [1, -1]) { const a = h.phi + sd * 0.35, d = h.rr - 1.6; spots.push([C.x + Math.cos(a) * d, C.z + Math.sin(a) * d]); } });
+    for (let t = 0; t < 6; t++) { const a = rand(0, 6.28), d = pr + 1.1; spots.push([C.x + Math.cos(a) * d, C.z + Math.sin(a) * d]); }
+    if (Pd) for (let t = 0; t < 5; t++) { const a = rand(0, 6.28), d = rand(3.4, 4.6) * WS; spots.push([Pd.x + Math.cos(a) * d, Pd.z + Math.sin(a) * d]); }
+    spots.forEach(([x, z], i) => { if (free(x, z, 0.45)) { spawnFlowers(x, z, 'mix', 3 + i * 0.04); mark(x, z, 0.5); } });
+  }
+  // 11. 鱼
+  if (Pd) for (let i = 0; i < 3 + Math.floor(rand(0, 3)); i++) { const q = waterPoint(Pd.x, Pd.z, 4, 0.3); if (q) spawnFish(q.x, q.z, ST.build === 'oriental' ? 'koi' : 'mix', 3 + i * 0.15); }
 }
 
 // ================= 换场景 / 随机地形 =================
