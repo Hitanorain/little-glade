@@ -45,19 +45,27 @@
     box-shadow: 0 6px 24px rgba(70, 52, 30, 0.12), 0 1px 0 rgba(255, 255, 255, 0.7) inset;
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   }
-  .title {
-    position: absolute; top: calc(16px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px));
-    padding: 12px 18px 12px; max-width: min(320px, calc(100vw - 32px));
+  /* 右侧一列：标题和场景卡片在上，时辰天气卡片在下；太高时在列里滚动 */
+  .rcol {
+    position: absolute; top: calc(16px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
+    width: 250px; display: flex; flex-direction: column; gap: 10px;
+    max-height: calc(100% - 200px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow-y: auto; scrollbar-width: none;
   }
+  .rcol::-webkit-scrollbar { display: none; }
+  .title { padding: 12px 16px; flex: 0 0 auto; }
+  /* 左上角：隐藏菜单、全屏两个小按钮 */
+  .uibtns { position: absolute; top: calc(16px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); display: flex; gap: 6px; }
+  .uibtn { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; cursor: pointer; color: var(--ink); border-radius: 12px; }
+  .uibtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .uibtn:hover { background: #fffaf0; }
+  .uibtn:focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
+  #app.ui-hidden .rcol, #app.ui-hidden .dock, #app.ui-hidden .help { display: none; }
   .title h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 30px; letter-spacing: 0.08em; line-height: 1.1; }
   .title .hub { display: inline-block; margin-bottom: 4px; font-size: 12px; color: var(--ink-soft); text-decoration: none; }
   .title .hub:hover { color: var(--ink); }
   .title p { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; text-wrap: balance; }
 
-  .side {
-    position: absolute; top: calc(16px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
-    padding: 12px 14px; width: 230px; display: flex; flex-direction: column; gap: 10px;
-  }
+  .side { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
   .side .lab { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
   .side .lab b { font-family: var(--font-display); font-weight: 400; font-size: 17px; color: var(--slate); }
   .side .moonrow { display: flex; align-items: baseline; gap: 6px; }
@@ -125,10 +133,11 @@
 
   @media (max-width: 1100px) { .help { display: none; } }
   @media (max-width: 720px) {
+    .rcol { width: 190px; max-height: calc(100% - 170px); }
     .title { padding: 8px 12px; }
     .title h1 { font-size: 22px; }
     .title p { display: none; }
-    .side { width: 170px; padding: 8px 10px; gap: 7px; }
+    .side { padding: 8px 10px; gap: 7px; }
     .tool { width: 54px; font-size: 11.5px; }
     .tool kbd { display: none; }
   }
@@ -142,6 +151,12 @@
   <div class="sunglow" id="sunglow"></div>
   <div class="vignette"></div>
 
+  <div class="uibtns">
+    <button type="button" class="card uibtn" id="hideUi" title="隐藏所有菜单（H）" aria-label="隐藏所有菜单" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button type="button" class="card uibtn" id="fullBtn" title="全屏（F）" aria-label="全屏" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  </div>
+
+  <div class="rcol">
   <header class="card title">
     <a class="hub" href="https://hitanorain.github.io/" title="回到游戏厅主页">← 游戏厅</a>
     <h1>小小林间</h1>
@@ -173,10 +188,12 @@
       <button class="btn" id="musicBtn" title="每种场景风格有自己的背景音乐">音乐：开</button>
     </div>
   </aside>
+  </div>
 
   <div class="help">
     左键拖拽：建造（没选工具时转视角）<br>
     Esc：取消这次建造 / 退出工具<br>
+    H：隐藏菜单　F：全屏<br>
     右键拖拽：旋转视角<br>
     Shift+右键 / 中键：平移<br>
     滚轮：缩放　Ctrl+Z：撤销
@@ -201,7 +218,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -715,7 +732,11 @@ const WM = new Float32Array(NN), WB = new Float32Array(NN), DW = new Float32Arra
 const BC = new Float32Array(NN * 3);
 const WDP = new Float32Array(NN).fill(1);   // 每个格子的水深系数（浅 0.5 / 中 1 / 深 1.8）
 const WLP = new Float32Array(NN).fill(1);   // 每个格子的水位系数（低 0 / 中 0.5 / 高 1）：水面离岸边地面有多远
-const GRIDS = { D, P, WET, WD, WM, WDP, WLP };
+// 溪流挖出的河道单独记一层：算地面高度时加上它，但池塘按岸线定水位时不算它，挖到池边也不会把池塘水位拉低
+const SD = new Float32Array(NN);
+// 假山的山体高度也单独一层：涂抹假山就是往这一层上加高，几笔叠在同一层上天然连成一座山
+const RK = new Float32Array(NN);
+const GRIDS = { D, P, WET, WD, WM, WDP, WLP, SD, RK };
 const gxy = i => -L + i * CELL;
 
 let TER = { ox: 11.3, oz: -4.1, amp: 1.6, freq: 0.06, lift: 0.25 };
@@ -740,7 +761,7 @@ const tGeo = new THREE.BufferGeometry();
   const gDark = new THREE.Color(0.8, 0.86, 0.74), gMid = new THREE.Color(1.05, 1.05, 0.95), gLight = new THREE.Color(1.22, 1.14, 0.88), c = new THREE.Color();
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const k = j * N + i; let x = gxy(i), z = gxy(j);
-    BASE[k] = baseHeight(x, z); H[k] = BASE[k];
+    BASE[k] = baseHeight(x, z); H[k] = BASE[k] + SD[k] + RK[k];
     const r = Math.hypot(x, z);
     if (r > R) { x *= R / r; z *= R / r; EDGE[k] = 1; }
     pos[k * 3] = x; pos[k * 3 + 1] = EDGE[k] ? 0 : H[k]; pos[k * 3 + 2] = z;
@@ -755,6 +776,7 @@ const tGeo = new THREE.BufferGeometry();
   tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(NN * 3), 3));
   tGeo.setAttribute('aMix', new THREE.BufferAttribute(new Float32Array(NN * 4), 4));
   tGeo.setAttribute('aTech', new THREE.BufferAttribute(new Float32Array(NN), 1));
+  tGeo.setAttribute('aRock', new THREE.BufferAttribute(new Float32Array(NN), 1));
   tGeo.setIndex(idx);
 }
 const CAUSTIC_GLSL = `
@@ -768,12 +790,12 @@ float caustic(vec2 p, float t) {
 }`;
 const terrainU = { tGrass: { value: texGrass }, tDirt: { value: texDirt }, tSand: { value: texSand }, uTime: { value: 0 }, uSun: { value: 1 }, uGrassTint: { value: new THREE.Color(1, 1, 1) }, uWet: { value: 0 }, uDirtTint: { value: new THREE.Color(1, 1, 1) }, uSandTint: { value: new THREE.Color(1, 1, 1) }, uDirtGrey: { value: 0 } };
 // 科技地面（未来风）：方形地砖 + 细细的灯缝，草只长在一块块种植池里（aTech = 种植池遮罩，restyleGround 里按 planterMask 填）
-Object.assign(terrainU, { uTech: { value: 0 }, uTechGlow: { value: 0 }, uTechTint: { value: new THREE.Color(1, 1, 1) } });
+Object.assign(terrainU, { uTech: { value: 0 }, uTechGlow: { value: 0 }, uTechTint: { value: new THREE.Color(1, 1, 1) }, uRockA: { value: new THREE.Color('#68645c') }, uRockB: { value: new THREE.Color('#8f897e') }, uMoss: { value: new THREE.Color('#4f7a2c') } });
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0, envMapIntensity: 0.3 });
 terrainMat.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, terrainU);
-  sh.vertexShader = 'attribute vec4 aMix;\nattribute float aTech;\nvarying vec4 vMix;\nvarying float vTech;\nvarying vec3 vTW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
-    '#include <begin_vertex>\n vMix = aMix; vTech = aTech; vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+  sh.vertexShader = 'attribute vec4 aMix;\nattribute float aTech;\nattribute float aRock;\nvarying vec4 vMix;\nvarying float vTech;\nvarying float vRock;\nvarying vec3 vTW;\nvarying vec3 vWN;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+    '#include <begin_vertex>\n vMix = aMix; vTech = aTech; vRock = aRock; vWN = normalize(mat3(modelMatrix) * objectNormal); vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
   sh.fragmentShader = 'uniform sampler2D tGrass; uniform sampler2D tDirt; uniform sampler2D tSand; uniform float uTime; uniform float uSun; uniform vec3 uGrassTint; uniform float uWet; uniform vec3 uDirtTint; uniform vec3 uSandTint; uniform float uDirtGrey;\nvarying vec4 vMix;\nvarying vec3 vTW;\n' + CAUSTIC_GLSL + '\n' +
     sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
     vec2 tuv = vTW.xz * 0.3;
@@ -797,6 +819,14 @@ terrainMat.onBeforeCompile = sh => {
     vec3 al = mix(gr, di, vMix.x);
     al = mix(al, sa, vMix.y);
     al = mix(al, al * 0.85 + vec3(0.07, 0.07, 0.05), vMix.z);
+    // 假山：岩石色（一层层的横纹 + 斑驳），朝上的平缓处长青苔
+    if (vRock > 0.02) {
+      float rv = dot(texture2D(tDirt, vTW.xz * 0.45 + vTW.y * 0.35).rgb, vec3(0.333)), band = fract(sin(floor(vTW.y * 2.6 + rv) * 12.9898) * 437.585);
+      vec3 rc = mix(uRockA, uRockB, smoothstep(0.2, 0.7, rv)) * (1.0 + 0.16 * band);
+      float moss = smoothstep(0.62, 0.9, vWN.y) * (0.55 + 0.45 * rv);
+      rc = mix(rc, uMoss * (0.8 + 0.4 * rv), moss * 0.8);
+      al = mix(al, rc, smoothstep(0.08, 0.4, vRock));
+    }
     float wd = vMix.w;
     al = mix(al, al * vec3(0.45, 0.56, 0.62), smoothstep(0.0, 0.9, wd));
     float ca = caustic(vTW.xz, uTime) * smoothstep(0.03, 0.3, wd) * (1.0 - smoothstep(1.0, 2.0, wd));
@@ -804,7 +834,7 @@ terrainMat.onBeforeCompile = sh => {
     al *= 1.0 - 0.3 * uWet * (1.0 - smoothstep(0.0, 0.05, wd));
     diffuseColor.rgb = al;`).replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
     totalEmissiveRadiance += vec3(0.25, 0.9, 1.0) * techSeam * uTechGlow * (1.0 - vMix.x) * (1.0 - smoothstep(0.0, 0.3, vMix.w));`);
-  sh.fragmentShader = 'uniform float uTech, uTechGlow;\nuniform vec3 uTechTint;\nvarying float vTech;\n' + sh.fragmentShader;
+  sh.fragmentShader = 'uniform float uTech, uTechGlow;\nuniform vec3 uTechTint, uRockA, uRockB, uMoss;\nvarying float vTech;\nvarying float vRock;\nvarying vec3 vWN;\n' + sh.fragmentShader;
 };
 // 种植池：按 3.4 米的格子，约四成格子是一块方形种植池（四边留出地砖），相邻的池子之间隔着白色池沿
 const PL_CELL = 3.4;
@@ -831,7 +861,8 @@ function updateTerrain(colors = true) {
     col[k * 3] = BC[k * 3]; col[k * 3 + 1] = BC[k * 3 + 1]; col[k * 3 + 2] = BC[k * 3 + 2];
     mx[k * 4] = P[k]; mx[k * 4 + 1] = Math.min(1, Math.max(WET[k], WETW[k]) * 0.95); mx[k * 4 + 2] = smooth(1.4, 3.4, D[k]) * 0.6; mx[k * 4 + 3] = WD[k];
   }
-  tGeo.attributes.color.needsUpdate = true; tGeo.attributes.aMix.needsUpdate = true;
+  const ra = tGeo.attributes.aRock.array; for (let k = 0; k < NN; k++) ra[k] = RK[k];
+  tGeo.attributes.color.needsUpdate = true; tGeo.attributes.aMix.needsUpdate = true; tGeo.attributes.aRock.needsUpdate = true;
 }
 updateTerrain(true);
 
@@ -960,12 +991,12 @@ const BS = 2, NB = Math.ceil(2 * L / BS), buckets = Array.from({ length: NB * NB
 }
 function setGrass(k) {
   const y = heightAt(GX[k], GZ[k]);
-  if (GHIDE[k] || GHIDEW[k] || (ST && GD[k] > ST.grassDensity) || (ST && ST.tech && planterMask(GX[k], GZ[k]) < 0.5)) _m.makeScale(0, 0, 0);
+  if (GHIDE[k] || GHIDEW[k] || (ST && GD[k] > ST.grassDensity) || (ST && ST.tech && planterMask(GX[k], GZ[k]) < 0.5) || sampleGrid(RK, GX[k], GZ[k]) > 0.12) _m.makeScale(0, 0, 0);
   else _m.compose(_p.set(GX[k], y - 0.02, GZ[k]), _q.setFromAxisAngle(UP, GR[k]), _s.set(GS[k], GS[k] * GSH[k] * (ST ? ST.grassH : 1), GS[k]));
   grass.setMatrixAt(k, _m);
   for (const md of meadow) {
     const i = md.idx[k]; if (i < 0) continue;
-    if (GHIDE[k] || GHIDEW[k] || (ST && md.seasons && GQ[k] > ST.meadowDensity)) _m.makeScale(0, 0, 0);
+    if (GHIDE[k] || GHIDEW[k] || (ST && md.seasons && GQ[k] > ST.meadowDensity) || sampleGrid(RK, GX[k], GZ[k]) > 0.12) _m.makeScale(0, 0, 0);
     else { _e.set(md.tilt[i * 2], GR[k] * 1.7, md.tilt[i * 2 + 1], 'YXZ'); _q.setFromEuler(_e); _m.compose(_p.set(GX[k] + 0.06, y + md.dy, GZ[k] + 0.04), _q, _s.set(md.sx[i], md.sy[i], md.sz[i])); }
     md.inst.setMatrixAt(i, _m);
   }
@@ -1013,7 +1044,7 @@ function makeEntity(type, extra = {}) {
 function editGrid(e, name, k, amount) {
   if (!amount) return;
   const arr = GRIDS[name]; arr[k] += amount;
-  if (name === 'D') H[k] = BASE[k] + D[k] + DW[k];
+  if (name === 'D' || name === 'SD' || name === 'RK') H[k] = BASE[k] + D[k] + DW[k] + SD[k] + RK[k];
   const m = e.edits[name] || (e.edits[name] = new Map());
   m.set(k, (m.get(k) || 0) + amount);
 }
@@ -1021,7 +1052,7 @@ function paintMax(e, name, k, value) {
   const arr = GRIDS[name];
   if (value > arr[k]) editGrid(e, name, k, Math.min(1, value) - arr[k]);
 }
-const TYPE_NAME = { wall: '城墙', tower: '塔楼', house: '房屋', path: '小路', fence: '栅栏', tree: '树', flower: '花丛', pond: '池塘', water: '水域', fish: '鱼', aquatic: '水草', pool: '泳池', rock: '岩石', terrain: '地形', sheep: '绵羊' };
+const TYPE_NAME = { wall: '城墙', tower: '塔楼', house: '房屋', path: '小路', fence: '栅栏', tree: '树', flower: '花丛', pond: '池塘', water: '水域', fish: '鱼', aquatic: '水草', pool: '泳池', stream: '溪流', rockery: '假山', rock: '岩石', terrain: '地形', sheep: '绵羊' };
 // 新建筑会把压在下面的树和花挤走
 function clearNature(e) {
   for (const o of entities.slice()) if ((o.type === 'tree' || o.type === 'flower') && o !== e && e.dist(o.x, o.z) < 0.25) removeEntity(o, true);
@@ -1038,10 +1069,11 @@ function removeEntity(e, quiet = false, instant = false) {
   let terrainChanged = false;
   for (const [name, map] of Object.entries(e.edits)) {
     const arr = GRIDS[name];
-    for (const [k, a] of map) { arr[k] -= a; if (name === 'D') H[k] = BASE[k] + D[k] + DW[k]; }
+    for (const [k, a] of map) { arr[k] -= a; if (name === 'D' || name === 'SD' || name === 'RK') H[k] = BASE[k] + D[k] + DW[k] + SD[k] + RK[k]; }
     terrainChanged = true;
   }
   if (e.edits.WM || e.edits.WDP || e.edits.WLP) rebuildWater(true);
+  if (e.edits.RK || e.type === 'stream') rebuildRockeryDeco();
   else if (terrainChanged) { updateTerrain(true); refreshGrass([-L, -L, L, L]); }
   const kids = [];
   e.group.traverse(o => { if (o !== e.group && (o.isMesh || o.isGroup) && o.parent === e.group) kids.push(o); });
@@ -1096,7 +1128,7 @@ function spawnPuff(x, y, z, o = {}) {
   s.material.color.set(o.color || '#fffaf0').multiplyScalar(1 - 0.7 * night);   // 夜里烟和尘土跟着暗下去
   s.position.set(x, y, z);
   scene.add(s);
-  puffs.push({ s, t: 0, life: o.life || 0.9, vx: o.vx || 0, vy: o.vy ?? 0.5, vz: o.vz || 0, size: o.size || 0.6, grow: o.grow ?? 1.6, op: o.opacity ?? 0.75, wind: o.wind || 0 });
+  puffs.push({ s, t: 0, life: o.life || 0.9, vx: o.vx || 0, vy: o.vy ?? 0.5, vz: o.vz || 0, size: o.size || 0.6, grow: o.grow ?? 1.6, op: o.opacity ?? 0.75, wind: o.wind || 0, g: o.g || 0 });
 }
 function dust(x, z, n = 6, spread = 1) {
   const y = heightAt(x, z) + 0.2;
@@ -1325,7 +1357,7 @@ function setMusicStyle(key) {
 
 // ================= 状态 =================
 const S = { style: 'rustic', waterDepth: 1.0, waterR: 1.7, waterMode: 'add', tool: 'wall', roof: ROOFS[0].hex, tree: 'mix', flower: 'mix', fish: 'mix', sculpt: 1, stroke: null, season: 'autumn', weather: 'sunny', wind: 'breeze',
-  waterLevel: 1, timeFlow: 'slow', editMode: 'win', aqua: 'mix', shoreRock: 1, waterRock: 0.5, pebble: 1, autoPlant: 1, waterTint: 'style' };
+  waterLevel: 1, timeFlow: 'slow', editMode: 'win', streamW: 1.2, rockMode: 1, rockR: 1.8, aqua: 'mix', shoreRock: 1, waterRock: 0.5, pebble: 1, autoPlant: 1, waterTint: 'style' };
 
 // ================= 建造：城墙与塔楼 =================
 function wallSegment(b, len, Hh, T, merlon, vines, gb = null) {
@@ -3025,8 +3057,8 @@ function spawnFlowers(x, z, mode, delay = 0) {
 }
 
 // ================= 自然：青苔岩石 =================
-function makeRockGeo(seed) {
-  const g = new THREE.IcosahedronGeometry(1, 2), p = g.attributes.position, v = new THREE.Vector3();
+function makeRockGeo(seed, detail = 2) {
+  let g = new THREE.IcosahedronGeometry(1, detail); const p = g.attributes.position, v = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
     const n = noise(v.x * 1.3 + seed, v.z * 1.3 + v.y * 0.7) * 0.65 + noise(v.y * 2.6 + seed * 2, v.x * 2.6 - v.z) * 0.35;
@@ -3034,10 +3066,16 @@ function makeRockGeo(seed) {
     if (v.y < -0.25) v.y = -0.25 + (v.y + 0.25) * 0.3;
     p.setXYZ(i, v.x, v.y, v.z);
   }
+  // 细分高的版本把重合的顶点并起来再算法线，才是平滑的（二十面体默认每个面各自一份顶点）
+  if (detail > 2) { g.deleteAttribute('uv'); g.deleteAttribute('normal'); g = mergeVertices(g); }
   g.computeVertexNormals();
   return g;
 }
 const ROCKS = [makeRockGeo(2.1), makeRockGeo(5.7), makeRockGeo(9.3)];
+// 假山用的圆润石头：面更多，配合平滑着色，看不出一块块的棱角
+const SMOOTH_ROCKS = [makeRockGeo(3.4, 3), makeRockGeo(7.2, 3), makeRockGeo(11.8, 3), makeRockGeo(15.1, 3)];
+const rockSmoothMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0, envMapIntensity: 0.45 });
+addSnow(rockSmoothMat, 'rocksmooth', 1);
 // 方圆的岸边石块：平顶、带棱角，顶上更容易长青苔
 function makeChunkGeo(seed) {
   const g = new THREE.BoxGeometry(1, 1, 1, 4, 3, 4).toNonIndexed(), p = g.attributes.position, v = new THREE.Vector3(), n = new THREE.Vector3();
@@ -3198,7 +3236,7 @@ function rebuildWater(full) {
   for (let k = 0; k < NN; k++) {
     const b = WB[k];
     DW[k] = b > 0.01 ? -1.15 * _wdp[k] * smooth(0.22, 0.68, b) * (0.6 + 0.4 * smooth(0.7, 1, b)) : 0;
-    H[k] = BASE[k] + D[k] + DW[k];
+    H[k] = BASE[k] + D[k] + DW[k] + SD[k] + RK[k];
   }
   const lab = new Int32Array(NN).fill(-1), stack = [];
   WLV.fill(NaN);
@@ -3237,7 +3275,7 @@ function rebuildWater(full) {
   }
   for (let k = 0; k < NN; k++) {
     if (isNaN(WLV[k]) || lab[k] >= 0) continue;
-    const need = WLV[k] + 0.08 - H[k]; if (need > 0) { DW[k] += need; H[k] += need; }
+    const need = WLV[k] + 0.08 - H[k]; if (need > 0 && SD[k] > -0.01) { DW[k] += need; H[k] += need; }   // 小溪挖过的格子不垫，免得在入口垒一道坝
   }
   waterFx.cells = [];
   for (let k = 0; k < NN; k++) {
@@ -3463,7 +3501,348 @@ function aquaSpawn(p) {
 const WATER_TINTS = [{ v: 'style', n: '默认' }, { v: 'clear', n: '清澈' }, { v: 'jade', n: '碧绿' }, { v: 'blue', n: '湖蓝' }, { v: 'ink', n: '墨色' }];
 const WATER_COLS = { clear: ['#eef8f6', '#8cc4c4', '#b8e0dc'], jade: ['#d8eedc', '#3f8a6a', '#6fae8c'], blue: ['#d8ecfa', '#2f6fb0', '#6fa0d8'], ink: ['#c8d4d4', '#2a4048', '#4a6066'] };
 const waterCols = () => WATER_COLS[S.waterTint] || ST.water;
-function applyWaterTint() { waterMat.attenuationColor.set(waterCols()[2]); buildWaterMesh(); }
+function applyWaterTint() { waterMat.attenuationColor.set(waterCols()[2]); streamWaterMat.attenuationColor.copy(waterMat.attenuationColor); buildWaterMesh(); }
+
+// ================= 溪流 =================
+// 像画小路一样画一笔：沿线挖一条浅河道，水面从起点往下游只降不升，流进池塘的那段不低于池塘水面；
+// 水面是一条带子（两边透明、中间深），水纹和浮沫顺着水流方向漂；岸边散落小石头和芦苇
+const streamNormal = waterNormal.clone(); streamNormal.needsUpdate = true;
+const streamMat = new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 0.1, metalness: 0, normalMap: streamNormal, normalScale: new THREE.Vector2(0.5, 0.5), envMapIntensity: 0.65, depthWrite: false });
+const foamGeo = new THREE.CircleGeometry(1, 7).rotateX(-Math.PI / 2);
+const foamMat = new THREE.MeshBasicMaterial({ color: '#f4fbfc', transparent: true, opacity: 0.7, depthWrite: false });
+// 折线上离 (x, z) 最近的一段：返回段号 i、段内比例 t 和距离 d
+function nearestOnPoly(x, z, pts) {
+  let bi = 0, bt = 0, bd = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], vx = b.x - a.x, vz = b.z - a.z, ll = vx * vx + vz * vz;
+    const t = ll > 0 ? clamp(((x - a.x) * vx + (z - a.z) * vz) / ll, 0, 1) : 0, d = Math.hypot(a.x + vx * t - x, a.z + vz * t - z);
+    if (d < bd) { bd = d; bi = i; bt = t; }
+  }
+  return { i: bi, t: bt, d: bd };
+}
+// 溪面用和池塘同一种透光水面（复制一份，换成会顺水流动的法线贴图）；瀑布是一片顺着山石落下的水帘
+const streamWaterMat = waterMat.clone(); streamWaterMat.normalMap = streamNormal; streamWaterMat.normalScale = new THREE.Vector2(0.32, 0.32);
+// 水帘的透明度贴图：横向两边慢慢淡出，竖向是一缕缕深浅不一的水纹；贴图顺着水流往下滚，边缘就是虚的、流动的
+const fallAlphaTex = (() => {
+  const W = 64, Hh = 256, c = document.createElement('canvas'); c.width = W; c.height = Hh;
+  const g = c.getContext('2d'), img = g.createImageData(W, Hh), cols = Array.from({ length: 9 }, () => ({ x: rand(0.1, 0.9), w: rand(0.03, 0.09), f: rand(1, 3), p: rand(0, 6.28) }));
+  for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
+    const u = x / (W - 1), v = y / Hh * Math.PI * 2;
+    const side = smooth(0, 0.28, u) * smooth(1, 0.72, u) * (0.85 + 0.15 * Math.sin(v * 2 + u * 5));
+    let st = 0; for (const s of cols) st += Math.exp(-(((u - s.x - 0.03 * Math.sin(v * s.f + s.p)) / s.w) ** 2)) * (0.6 + 0.4 * Math.sin(v * s.f * 2 + s.p));
+    const a = clamp(side * (0.5 + 0.55 * Math.min(1, st)), 0, 1) * 255, i = (y * W + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = a; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c); t.wrapS = THREE.ClampToEdgeWrapping; t.wrapT = THREE.RepeatWrapping;
+  return t;
+})();
+const cascadeMat = new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 0.15, metalness: 0, alphaMap: fallAlphaTex, normalMap: streamNormal, normalScale: new THREE.Vector2(0.8, 0.8), emissive: '#ffffff', emissiveIntensity: 0.14, envMapIntensity: 0.8, depthWrite: false, side: THREE.DoubleSide });
+// ================= 假山 =================
+// 像刷地形一样按住涂抹：往 RK 层上加高，同一处反复涂越堆越高；山体表面是抬高的地面（着岩石色），
+// 上面按整座山的高度自动摆半埋的圆润石块、山峰的尖石和石缝里的小植物——每涂完一笔都按整片 RK 重新摆，几笔之间自然融成一座山
+function rockeryAt(e, p, dt, dir) {
+  const rb = S.rockR;
+  forCells(p.x - rb, p.z - rb, p.x + rb, p.z + rb, (x, z, k) => {
+    const d = Math.hypot(x - p.x, z - p.z); if (d > rb) return;
+    const edge = smooth(R - 1.5, R - 4, Math.hypot(x, z)); if (edge <= 0) return;
+    const f = smooth(rb, 0, d) * edge * (0.75 + 0.5 * noise(x * 0.9 + 3, z * 0.9 - 2));
+    const nv = clamp(RK[k] + dir * 1.6 * dt * f, 0, 6);
+    if (Math.abs(nv - RK[k]) > 1e-5) editGrid(e, 'RK', k, nv - RK[k]);
+  });
+  // 限制坡度：相邻两格的高差超过上限（约 45°）时，把多出来的一部分挪给低的那格，像碎石往下滚；
+  // 山体总量不变，反复涂同一处时山会往四周摊开变宽，不会堆成一根尖柱
+  const ex = rb + 2.4, MAXD = 0.38;
+  for (let pass = 0; pass < 3; pass++) forCells(p.x - ex, p.z - ex, p.x + ex, p.z + ex, (x, z, k) => {
+    const i = k % N, j = (k - i) / N; if (i < 1 || j < 1 || i > N - 2 || j > N - 2 || RK[k] <= 0) return;
+    for (const nb of [k - 1, k + 1, k - N, k + N]) {
+      const over = RK[k] - RK[nb] - MAXD;
+      if (over > 0.002) { const mv = over * 0.3; editGrid(e, 'RK', k, -mv); editGrid(e, 'RK', nb, mv); }
+    }
+  });
+  updateTerrain(true);
+  refreshGrass([p.x - rb, p.z - rb, p.x + rb, p.z + rb]);
+}
+// 在 (cx, cz) 堆一座圆润的小山（溪流起点不在山上时当水源用），改动记在 e 名下，撤销时一起撤
+function addMound(e, cx, cz, r, h) {
+  forCells(cx - r, cz - r, cx + r, cz + r, (x, z, k) => {
+    const d = Math.hypot(x - cx, z - cz); if (d > r) return;
+    const t = h * Math.pow(1 - (d / r) ** 2, 1.4) * (0.85 + 0.3 * noise(x * 0.9 + 7, z * 0.9 + 1));
+    if (t > RK[k]) editGrid(e, 'RK', k, t - RK[k]);
+  });
+  updateTerrain(true); refreshGrass([cx - r, cz - r, cx + r, cz + r]);
+}
+const RKD = { rocks: null, plants: null, trunks: null, crowns: null };
+function rebuildRockeryDeco() {
+  for (const k in RKD) if (RKD[k]) { scene.remove(RKD[k]); RKD[k].geometry.dispose(); RKD[k] = null; }
+  const rb = new Builder(), tb = new Builder(), kb = new Builder(), cb = new Crown('pine', 0.38);
+  const streams = entities.filter(o => o.type === 'stream' && !o.dead && o.pts);
+  const sp = 0.7, n = Math.ceil(2 * L / sp), h = (x, z) => heightAt(x, z);
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+    const cx = -L + i * sp, cz = -L + j * sp;
+    if (sampleGrid(RK, cx, cz) < 0.15) continue;
+    seeded(cellSeed(i, j, 41), () => {
+      const x = cx + rand(-0.38, 0.38) * sp, z = cz + rand(-0.38, 0.38) * sp, rk = sampleGrid(RK, x, z);
+      if (rk < 0.22 || Math.hypot(x, z) > R - 1.2) return;
+      if (streams.some(o => distPoly(x, z, o.pts) < o.hw + 0.35)) return;   // 溪水流过的槽里不摆
+      const gy = h(x, z), gx = (h(x + 0.3, z) - h(x - 0.3, z)) / 0.6, gz = (h(x, z + 0.3) - h(x, z - 0.3)) / 0.6, slope = Math.hypot(gx, gz);
+      const peak = rk > 0.9 && rk >= Math.max(sampleGrid(RK, x + 0.9, z), sampleGrid(RK, x - 0.9, z), sampleGrid(RK, x, z + 0.9), sampleGrid(RK, x, z - 0.9));
+      // 石块大小跟着山的高度走，但不超过脚下这块山体的宽度（高处窄、坡陡的地方石头小一些），大半埋进山里
+      const sz = clamp(0.32 + 0.16 * rk, 0.32, 0.9) * rand(0.8, 1.2) / (1 + 0.15 * slope), sy = sz * rand(0.7, 1.0);
+      // 沿着坡面法线往外凸出一点，坡上的石块才像一块块垒起来的
+      const nl = Math.hypot(gx, 1, gz), px = x - gx / nl * sz * 0.12, pz = z - gz / nl * sz * 0.12;
+      if (peak && Math.random() < 0.55) addRock(rb, M(x, gy - sz * 0.1, z, rand(0, 6), rand(-0.15, 0.15), rand(-0.15, 0.15), sz * 0.5, sz * rand(1.2, 1.7), sz * 0.5), 0.55, pick(SMOOTH_ROCKS));
+      else if (Math.random() < 0.9) addRock(rb, M(px, gy - sz * 0.3, pz, rand(0, 6), rand(-0.4, 0.4), rand(-0.4, 0.4), sz * rand(1, 1.35), sy, sz), 0.7, pick(SMOOTH_ROCKS));
+      const top = gy + sy * 0.3, ox = x + rand(-0.12, 0.12), oz = z + rand(-0.12, 0.12), roll = Math.random();
+      if (slope < 0.9) {
+        if (roll < 0.2) for (let k = 0; k < 7; k++) { const a = rand(0, 6.28); tb.add(PETAL, jc(pick(['#6f9a45', '#7fa84c', '#5f8a3c']), 0.05), M(ox + Math.cos(a) * 0.07, top - 0.02, oz + Math.sin(a) * 0.07, -a, 0, rand(1.0, 1.35), rand(0.34, 0.52), 1, 0.055)); }
+        else if (roll < 0.34) { const fs = rand(0.55, 0.85); addFern(tb, M(ox, top - 0.03, oz, rand(0, 6), 0, 0, fs, fs, fs)); }
+        else if (roll < 0.46) {
+          const fc = pick(['#f4a6cb', '#ffffff', '#e86a8a', '#c8a0ff', '#f6d56a']);
+          for (let k = 0; k < 6; k++) tb.add(ICO, jc('#4f7f38', 0.05), M(ox + rand(-0.22, 0.22), top + rand(0.03, 0.18), oz + rand(-0.22, 0.22), rand(0, 6), rand(0, 6), 0, rand(0.14, 0.22), rand(0.11, 0.17), rand(0.14, 0.22)));
+          for (let k = 0; k < 12; k++) tb.add(ICO, jc(fc, 0.04), M(ox + rand(-0.26, 0.26), top + rand(0.12, 0.3), oz + rand(-0.26, 0.26), 0, 0, 0, 0.042, 0.042, 0.042));
+        } else if (roll < 0.5 && rk > 1.2) {   // 高处偶尔一棵小松树
+          kb.add(TRUNK, '#5b4a3c', M(ox, top + 0.35, oz, 0, rand(-0.2, 0.2), rand(-0.2, 0.2), 0.07, 0.8, 0.07));
+          for (let k = 0; k < 4; k++) cb.cluster(ox + rand(-0.35, 0.35), top + 0.55 + k * 0.18, oz + rand(-0.35, 0.35), 0.32 - k * 0.04, 0.5, Math.random(), 120);
+        }
+      } else if (roll < 0.3) {   // 陡坡上垂下一串藤蔓，顺着坡往下
+        let vx = x, vy = top, vz = z; const ux = -gx / slope, uz = -gz / slope, len = rand(0.7, 1.4);
+        for (let t = 0; t < len; t += 0.11) {
+          vx += ux * 0.05; vz += uz * 0.05; vy = Math.max(h(vx, vz) + 0.06, vy - 0.11);
+          tb.add(PETAL, jc(pick(['#4f8a3a', '#5f9a46', '#3f7a32']), 0.05), M(vx + rand(-0.05, 0.05), vy, vz + rand(-0.05, 0.05), rand(0, 6.28), 0, rand(-1.3, -0.5), rand(0.14, 0.2), 1, 0.1));
+        }
+      }
+    });
+  }
+  if (rb.parts.length) { RKD.rocks = rb.mesh(rockSmoothMat, true); scene.add(RKD.rocks); }
+  if (tb.parts.length) { RKD.plants = tb.mesh(flowerMat, false); scene.add(RKD.plants); }
+  if (kb.parts.length) { RKD.trunks = kb.mesh(vcMat, true); scene.add(RKD.trunks); RKD.crowns = cb.mesh(); recolorCrown(RKD.crowns, ['#3f6f4a', '#4c7d55', '#3a6544']); scene.add(RKD.crowns); }
+}
+const showRockeryDeco = on => { for (const k in RKD) if (RKD[k]) RKD[k].visible = on; };
+function buildStream(raw, delay = 0, width = S.streamW) {
+  raw = raw.map(q => ({ x: q.x, z: q.z }));
+  // 小溪总是从高处往池塘流：从池塘往外画的、或者起点比终点低的，掉个头
+  const f0 = raw[0], f1 = raw[raw.length - 1], inW = q => waterLevelAt(q.x, q.z) !== null;
+  if ((inW(f0) && !inW(f1)) || (!inW(f0) && !inW(f1) && heightAt(f0.x, f0.z) < heightAt(f1.x, f1.z) - 0.3)) raw.reverse();
+  const e = makeEntity('stream');
+  // 起点不在假山上：在起点堆一座小山当水源（记在这条小溪名下，撤销时一起撤）
+  let autoRk = false;
+  if (sampleGrid(RK, raw[0].x, raw[0].z) < 0.4) { addMound(e, raw[0].x, raw[0].z, 2.3, 2.2); autoRk = true; }
+  let pts = resample(chaikin(chaikin(chaikin(raw))), 0.3);
+  if (pts.length < 4) { removeEntity(e, true, true); toast('画长一点才能成一条小溪'); return null; }
+  const n = pts.length, hw = width / 2, lv = new Float32Array(n), end = pts[n - 1], endLv = waterLevelAt(end.x, end.z), nrm = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)], tl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    nrm.push({ x: -(b.z - a.z) / tl, z: (b.x - a.x) / tl });
+  }
+  // 水面高度：起点比地面低一点，往下游只降不升；流进池塘的那段不低于池塘水面
+  let cur = Infinity;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = nrm[i];
+    const g = Math.min(heightAt(p.x, p.z), heightAt(p.x + q.x * hw * 0.8, p.z + q.z * hw * 0.8), heightAt(p.x - q.x * hw * 0.8, p.z - q.z * hw * 0.8));
+    cur = Math.min(cur, g - 0.12); lv[i] = endLv !== null ? Math.max(cur, endLv) : cur;
+  }
+  e.raw = raw; e.pts = pts; e.lv = lv; e.width = width;
+  e.dist = (x, z) => distPoly(x, z, pts) - hw;
+  for (const o of entities.slice()) if ((o.type === 'tree' || o.type === 'flower') && o.x !== undefined && distPoly(o.x, o.z, pts) < hw + 0.7) removeEntity(o, true);
+  // 挖河道：中间低、两边缓缓收上来；山脚接瀑布的地方挖一个深一点的小水潭。池塘里、假山底下不动
+  const bb = bbox(pts, hw + 1.4);
+  forCells(bb[0], bb[1], bb[2], bb[3], (x, z, k) => {
+    const nb = nearestOnPoly(x, z, pts); if (nb.d > hw + 1.5 || sampleGrid(WB, x, z) > 0.45) return;
+    const L = lerp(lv[nb.i], lv[nb.i + 1], nb.t), c0 = H[k], dd = nb.d - hw;
+    let nh = c0;
+    // 河床中间低；两岸 0.9 米以内一定比水面高一点（平地上垫起一道低低的土埂），水面的边就被地面盖住，不会露出方格；再往外慢慢接回原地面
+    if (dd < 0) nh = Math.min(c0, L - 0.06 - 0.32 * (1 - (nb.d / hw) ** 2) * (width / 1.2));
+    else if (c0 < L + 0.06) nh = dd < 0.9 ? L + 0.06 + dd * 0.04 : lerp(c0, L + 0.1, smooth(1.5, 0.9, dd));
+    else nh = lerp(c0, Math.max(L + 0.06, c0 - 0.25), smooth(1.0, 0, dd));
+    if (Math.abs(nh - c0) > 1e-4) editGrid(e, 'SD', k, nh - c0);
+    paintMax(e, 'P', k, 0.5 * smooth(hw + 0.6, hw * 0.4, nb.d));
+  });
+  hideGrass(e, bb, (x, z) => distPoly(x, z, pts) < hw + 0.15);
+  updateTerrain(true);
+  // 溪面：按地形网格铺在河道里（每个格点取最近那段的水位），岸边比水高的地方由地形自然盖住，转弯也不会叠影；池塘范围内交给池塘自己的水面
+  const cum = arcLens(pts), total = cum[n - 1], wc = waterCols(), cSh = new THREE.Color(wc[0]), cDp = new THREE.Color(wc[1]), c = new THREE.Color();
+  const vid = new Map(), pos = [], col = [], uv = [], nor = [], idx = [];
+  const i0 = Math.max(0, Math.floor((bb[0] + L) / CELL)), i1 = Math.min(N - 1, Math.ceil((bb[2] + L) / CELL)), j0 = Math.max(0, Math.floor((bb[1] + L) / CELL)), j1 = Math.min(N - 1, Math.ceil((bb[3] + L) / CELL));
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const k = j * N + i, x = gxy(i), z = gxy(j);
+    if (sampleGrid(WB, x, z) > 0.3) continue;   // 池塘本身交给池塘的水面
+    const nb = nearestOnPoly(x, z, pts); if (nb.d > hw + 0.75) continue;
+    const level = lerp(lv[nb.i], lv[nb.i + 1], nb.t), depth = isNaN(WLV[k]) ? level - H[k] : WLV[k] - H[k];
+    vid.set(k, pos.length / 3);
+    pos.push(x, level, z); nor.push(0, 1, 0);
+    c.copy(cSh).lerp(cDp, smooth(0.05, 0.9, Math.max(0, depth))); col.push(c.r, c.g, c.b);
+    const side = Math.sign((x - pts[nb.i].x) * nrm[nb.i].x + (z - pts[nb.i].z) * nrm[nb.i].z);
+    uv.push(side * nb.d * 0.45, (cum[nb.i] + nb.t * (cum[nb.i + 1] - cum[nb.i])) * 0.4);
+  }
+  for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+    const a = vid.get(j * N + i), b = vid.get(j * N + i + 1), cc = vid.get((j + 1) * N + i), d = vid.get((j + 1) * N + i + 1);
+    if (a === undefined || b === undefined || cc === undefined || d === undefined) continue;
+    idx.push(a, cc, b, b, cc, d);
+  }
+  if (idx.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx);
+    const wm = new THREE.Mesh(g, streamWaterMat); wm.receiveShadow = true; wm.userData.own = true; wm.position.y = 0.006;
+    e.group.add(wm);
+  }
+  // 瀑布：从泉眼（山腰）顺着山石弯下来落进山脚的小水潭，越往下越宽；底下水花和水雾一直不停
+  // 陡的地方：水贴着山体往下冲，画成一条白色的湍流 / 瀑布带子（贴在河道水面上方一点，两侧虚边、水纹往下流）；
+  // 每段陡坡的坡脚溅水花，起点的泉眼也冒一小团泡沫
+  const steep = []; for (let i = 0; i < n - 1; i++) steep.push((lv[i] - lv[i + 1]) / Math.max(0.05, cum[i + 1] - cum[i]) > 0.3);
+  const runs = []; for (let i = 0; i < n - 1; i++) if (steep[i]) { if (runs.length && runs[runs.length - 1][1] >= i - 1) runs[runs.length - 1][1] = i + 1; else runs.push([i, i + 1]); }
+  const fp = [], fc = [], fu = [], fi = [], NC = 7, splashes = [{ x: pts[0].x, y: lv[0], z: pts[0].z, w: hw * 0.6, small: true }];
+  for (const [r0, r1] of runs) {
+    const a0 = Math.max(0, r0 - 1), a1 = Math.min(n - 1, r1 + 1); if (lv[a0] - lv[a1] < 0.25) continue;
+    const base0 = fp.length / 3, cnt = a1 - a0 + 1;
+    for (let i = a0; i <= a1; i++) {
+      const t = (i - a0) / (a1 - a0), fade = smooth(0, 0.15, t) * smooth(1, 0.75, t), w = hw * (1.0 + 0.1 * Math.sin(i * 1.7));
+      for (let c2 = 0; c2 < NC; c2++) {
+        const u = c2 / (NC - 1), s2 = u * 2 - 1;
+        fp.push(pts[i].x + nrm[i].x * s2 * w, lv[i] + 0.05 + 0.03 * (1 - s2 * s2), pts[i].z + nrm[i].z * s2 * w);
+        fc.push(0.86, 0.94, 1, 0.85 * fade); fu.push(u, cum[i] * 0.6);
+      }
+    }
+    for (let k = 0; k < cnt - 1; k++) for (let c2 = 0; c2 < NC - 1; c2++) { const a = base0 + k * NC + c2, b2 = a + NC; fi.push(a, a + 1, b2, a + 1, b2 + 1, b2); }
+    splashes.push({ x: pts[a1].x, y: lv[a1], z: pts[a1].z, w: hw, small: false });
+  }
+  if (fi.length) {
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3)); fg.setAttribute('color', new THREE.Float32BufferAttribute(fc, 4)); fg.setAttribute('uv', new THREE.Float32BufferAttribute(fu, 2)); fg.setIndex(fi); fg.computeVertexNormals();
+    const fm = new THREE.Mesh(fg, cascadeMat); fm.userData.own = true; fm.renderOrder = 2; e.group.add(fm);
+  }
+  // 水花处的泡沫：几片柔边的白斑浮在水面上，一张一缩地起伏
+  for (const sp2 of splashes) {
+    sp2.patches = []; sp2.t = 0; sp2.rt = 0; sp2.dt2 = 0;
+    for (let k = 0; k < (sp2.small ? 2 : 4); k++) {
+      const pm = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: puffTex, color: '#ffffff', transparent: true, depthWrite: false, opacity: 0.5 }));
+      pm.position.set(sp2.x + rand(-0.3, 0.3) * sp2.w * (k ? 1 : 0), sp2.y + 0.02 + k * 0.002, sp2.z + rand(-0.3, 0.3) * sp2.w * (k ? 1 : 0));
+      pm.userData.own = true; pm.renderOrder = 3; pm.userData.s = (k ? rand(0.45, 0.75) : 0.95) * (sp2.w * 2 + 0.3) * (sp2.small ? 0.7 : 1); pm.userData.ph = rand(0, 6.28);
+      e.group.add(pm); sp2.patches.push(pm);
+    }
+  }
+  e.splashes = splashes;
+  // 岸边：小石头和芦苇（流进池塘的那一截不放）
+  const rb = new Builder(), db = new Builder();
+  for (let d = 1.0; d < total - 0.4; d += rand(0.8, 1.5)) {
+    let i = 0; while (i < n - 2 && cum[i + 1] < d) i++;
+    const t = (d - cum[i]) / Math.max(1e-6, cum[i + 1] - cum[i]), px = lerp(pts[i].x, pts[i + 1].x, t), pz = lerp(pts[i].z, pts[i + 1].z, t);
+    if (waterLevelAt(px, pz) !== null) continue;
+    const sd = Math.random() < 0.5 ? 1 : -1, o = hw + rand(0.0, 0.25), x = px + nrm[i].x * sd * o, z = pz + nrm[i].z * sd * o, s3 = rand(0.14, 0.32);
+    addRock(rb, M(x, heightAt(x, z) - s3 * 0.15, z, rand(0, 6), rand(-0.2, 0.2), rand(-0.2, 0.2), s3 * rand(1, 1.4), s3 * rand(0.6, 0.9), s3), 0.6, pick(CHUNKS));
+    if (Math.random() < 0.25) { const ox = x + nrm[i].x * sd * 0.35, oz = z + nrm[i].z * sd * 0.35; addReeds(db, ox, oz, (qx, qz) => heightAt(qx, qz) - 0.05, 4); }
+  }
+  if (rb.parts.length) e.group.add(rb.mesh(rockMat, true));
+  if (db.parts.length) e.group.add(db.mesh(flowerMat, true));
+  // 浮沫：几片小白点顺着水漂，漂到尽头从起点再来
+  const nfoam = Math.max(3, Math.ceil(total / 1.1)), foam = new THREE.InstancedMesh(foamGeo, foamMat, nfoam);
+  foam.frustumCulled = false; e.group.add(foam);
+  e.foam = { mesh: foam, list: Array.from({ length: nfoam }, () => ({ d: rand(0, total), off: rand(-0.6, 0.6), s: rand(0.025, 0.06), sp: rand(0.8, 1.25) })) };
+  e.cum = cum; e.total = total; e.nrm = nrm; e.hw = hw;
+  if (autoRk) toast('起点堆了一座小山当水源');
+  rebuildRockeryDeco();
+  if (!quietBuild) tween(0.01, delay, () => {}, () => { sfx('water'); spawnRipple(end.x, lv[n - 1], end.z); });
+  return e;
+}
+function updateStreams(dt) {
+  streamNormal.offset.y -= dt * 0.32; streamNormal.offset.x = Math.sin(perfT * 0.3) * 0.02; fallAlphaTex.offset.y -= dt * 0.55;
+  const frozen = S.season === 'winter' && WX.snow > 0.3;
+  cascadeMat.opacity = frozen ? 0.5 : 1;
+  for (const e of entities) {
+    if (e.type !== 'stream' || !e.foam) continue;
+    const { pts, cum, total, nrm, lv, hw } = e, n = pts.length, m = e.foam.mesh;
+    e.foam.list.forEach((f, k) => {
+      f.d += dt * 0.75 * f.sp; if (f.d > total) f.d -= total;
+      let i = 0; while (i < n - 2 && cum[i + 1] < f.d) i++;
+      const t = (f.d - cum[i]) / Math.max(1e-6, cum[i + 1] - cum[i]), w = f.off * hw + Math.sin(f.d * 2.1 + k) * 0.08;
+      const x = lerp(pts[i].x, pts[i + 1].x, t) + nrm[i].x * w, z = lerp(pts[i].z, pts[i + 1].z, t) + nrm[i].z * w;
+      const fade = smooth(0, 0.8, f.d) * (1 - smooth(total - 0.8, total, f.d)) * (S.season === 'winter' ? 0 : 1);
+      _m.compose(_p.set(x, lerp(lv[i], lv[i + 1], t) + 0.015, z), _q.identity(), _s.set(f.s * fade * 1.6, 1, f.s * fade));
+      m.setMatrixAt(k, _m);
+    });
+    m.instanceMatrix.needsUpdate = true;
+    // 瀑布脚下：不停冒水雾、溅水花，隔一会儿荡开一圈涟漪
+    for (const F of e.splashes || []) {
+      for (const pm of F.patches) {
+        const k = 0.5 + 0.5 * Math.sin(perfT * 2.3 + pm.userData.ph);
+        pm.scale.setScalar(pm.userData.s * (0.85 + 0.25 * k) * (frozen ? 0.4 : 1)); pm.material.opacity = (frozen ? 0.2 : 0.38 + 0.22 * k);
+      }
+      if (frozen) continue;
+      F.t -= dt; F.rt -= dt; F.dt2 -= dt;
+      const sm = F.small ? 0.5 : 1;
+      if (F.t <= 0) { F.t = rand(0.07, 0.13) / sm; const a = rand(0, 6.28); spawnPuff(F.x + Math.cos(a) * 0.2, F.y + 0.08, F.z + Math.sin(a) * 0.2, { color: '#f2f8fa', size: rand(0.14, 0.26) * sm, life: rand(0.6, 1.0), vx: Math.cos(a) * 0.3, vz: Math.sin(a) * 0.3, vy: rand(0.3, 0.6), grow: 1.4, opacity: 0.3 }); }
+      if (F.dt2 <= 0) { F.dt2 = rand(0.035, 0.07) / sm; const a = rand(0, 6.28), r0 = rand(0, F.w), sp = rand(0.3, 0.9) * sm; spawnPuff(F.x + Math.cos(a) * r0, F.y + 0.05, F.z + Math.sin(a) * r0, { color: '#ffffff', size: rand(0.04, 0.08), life: rand(0.45, 0.7), vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, vy: rand(1.0, 2.0) * (F.small ? 0.6 : 1), g: 5.5, grow: 0.2, opacity: 0.9 }); }
+      if (F.rt <= 0) { F.rt = rand(0.4, 0.7) / sm; spawnRipple(F.x + rand(-0.25, 0.25) * sm, F.y, F.z + rand(-0.25, 0.25) * sm); }
+    }
+  }
+}
+// 溪水声：带通的粉噪声做底（中心频率慢慢漂），加一点高频嘶声，再随机冒出一串"咕嘟"的小水泡；镜头离小溪越近越响
+let brookA = null;
+function startBrook() {
+  const master = actx.createGain(); master.gain.value = 0; master.connect(actx.destination);
+  const src = actx.createBufferSource(); src.buffer = pinkBuffer(4); src.loop = true;
+  const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 0.7;
+  const g1 = actx.createGain(); g1.gain.value = 0.9; src.connect(bp).connect(g1).connect(master);
+  const hs = actx.createBufferSource(); hs.buffer = noiseBuffer(2); hs.loop = true;
+  const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3000;
+  const g2 = actx.createGain(); g2.gain.value = 0.06; hs.connect(hp).connect(g2).connect(master);
+  src.start(); hs.start();
+  brookA = { master, bp, acc: 0 };
+}
+function brookBubble(t) {
+  const o = actx.createOscillator(), g = actx.createGain(), f0 = rand(450, 1300), dur = rand(0.035, 0.08);
+  o.type = 'sine'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * rand(1.4, 2.3), t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(rand(0.12, 0.3), t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.02);
+  o.connect(g).connect(brookA.master); o.start(t); o.stop(t + dur + 0.05);
+}
+function updateBrookAudio(dt) {
+  if (!actx || actx.state !== 'running') return;
+  const streams = entities.filter(e => e.type === 'stream' && !e.dead);
+  if (!streams.length && !brookA) return;
+  if (!brookA) startBrook();
+  const t = controls.target; let d = Infinity;
+  for (const s of streams) d = Math.min(d, distPoly(t.x, t.z, s.pts));
+  const zoom = clamp(1.3 - camera.position.distanceTo(t) / 80, 0.3, 1);
+  const vol = muted || !streams.length ? 0 : clamp(1 - d / 22, 0, 1) * zoom * 0.32 * (S.season === 'winter' ? 0.45 : 1);
+  const now = actx.currentTime;
+  brookA.master.gain.setTargetAtTime(vol, now, 0.5);
+  brookA.bp.frequency.setTargetAtTime(750 + 550 * (0.5 + 0.5 * Math.sin(perfT * 0.7) * Math.sin(perfT * 1.3 + 1)), now, 0.3);
+  if (vol > 0.01) { brookA.acc += dt * 12; while (brookA.acc >= 1) { brookA.acc -= rand(0.5, 1.5); brookBubble(now + rand(0.01, 0.12)); } }
+}
+// 鱼跃出水面落回去时的水声：一声"扑通"（往下滑的正弦）+ 一团带通噪声的水花 + 几颗溅起的小水珠
+let splashBuf = null;
+function splashSound(x, z, big) {
+  if (muted || !actx || actx.state !== 'running') return;
+  if (!splashBuf) splashBuf = noiseBuffer(1);
+  const dist = camera.position.distanceTo(_p.set(x, camera.position.y * 0.3, z)), vol = (big ? 0.24 : 0.1) * clamp(1.2 - dist / 50, 0.15, 1), t = actx.currentTime + 0.01;
+  _p.set(x, 0, z).project(camera);
+  let out = actx.destination;
+  if (actx.createStereoPanner) { const pn = actx.createStereoPanner(); pn.pan.value = clamp(_p.x, -0.8, 0.8); pn.connect(actx.destination); out = pn; }
+  const o = actx.createOscillator(), og = actx.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(big ? 420 : 620, t); o.frequency.exponentialRampToValueAtTime(big ? 150 : 260, t + 0.12);
+  og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(vol, t + 0.006); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+  o.connect(og).connect(out); o.start(t); o.stop(t + 0.2);
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = splashBuf; f.type = 'bandpass'; f.frequency.setValueAtTime(1600, t); f.frequency.exponentialRampToValueAtTime(600, t + 0.35); f.Q.value = 0.9;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol * 1.4, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + (big ? 0.45 : 0.25));
+  s.connect(f).connect(g).connect(out); s.start(t, rand(0, 0.4)); s.stop(t + 0.5);
+  if (big) for (let i = 0; i < 4; i++) {
+    const tt = t + rand(0.1, 0.4), d2 = actx.createOscillator(), dg = actx.createGain(), fr = rand(1400, 2600);
+    d2.type = 'sine'; d2.frequency.setValueAtTime(fr, tt); d2.frequency.exponentialRampToValueAtTime(fr * 1.5, tt + 0.03);
+    dg.gain.setValueAtTime(0.0001, tt); dg.gain.exponentialRampToValueAtTime(vol * 0.25, tt + 0.004); dg.gain.exponentialRampToValueAtTime(0.0001, tt + 0.05);
+    d2.connect(dg).connect(out); d2.start(tt); d2.stop(tt + 0.08);
+  }
+}
+function splashAt(x, y, z, big) {
+  spawnRipple(x, y, z);
+  if (big) tween(0.01, 0.18, () => {}, () => spawnRipple(x, y, z));
+  for (let i = 0, n = big ? 8 : 4; i < n; i++) {
+    const a = rand(0, 6.28), sp = rand(0.3, big ? 0.9 : 0.5);
+    spawnPuff(x + Math.cos(a) * 0.05, y + 0.04, z + Math.sin(a) * 0.05, { color: '#eef8fa', size: rand(0.05, 0.1), life: rand(0.45, 0.7), vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, vy: rand(1.2, big ? 2.4 : 1.6), g: 6, grow: 0.3, opacity: 0.85 });
+  }
+  splashSound(x, z, big);
+}
 
 // ================= 池塘里的鱼 =================
 const fishMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.15, side: THREE.DoubleSide, envMapIntensity: 0.9 });
@@ -3528,7 +3907,7 @@ function spawnFish(x, z, kind, delay = 0) {
   const e = makeEntity('fish'), f = makeFish(kind), sc = rand(...FISH[kind].size) * 1.2;
   f.g.scale.setScalar(sc); f.g.position.set(x, lv - 0.15, z);
   e.group.add(f.g);
-  const fs = { x, z, head: rand(0, 6.28), tx: x, tz: z, depth: rand(0.14, 0.32), speed: rand(0.3, 0.55), ph: rand(0, 6.28), level: lv };
+  const fs = { x, z, head: rand(0, 6.28), tx: x, tz: z, depth: rand(0.14, 0.32), speed: rand(0.3, 0.55), ph: rand(0, 6.28), level: lv, jumpCD: rand(6, 30), jump: null };
   e.fish = fs; e.mesh = f.g; e.tail = f.tail;
   e.dist = (px, pz) => Math.hypot(px - fs.x, pz - fs.z) - 0.3;
   pop(f.g, delay, 0.4);
@@ -3539,6 +3918,25 @@ function updateFish(e, dt) {
   const f = e.fish, lv = waterLevelAt(f.x, f.z);
   if (lv === null || lv - heightAt(f.x, f.z) < 0.05) { removeEntity(e, true); return; }
   f.level = lv;
+  // 鱼跃：隔一阵子顺着游的方向跳出水面，划一道弧线落回去；起跳、落水都有水花和水声。冬天结冰不跳
+  if (f.jump) {
+    const j = f.jump; j.t += dt; const k = Math.min(1, j.t / j.dur);
+    f.x = lerp(j.x0, j.x1, k); f.z = lerp(j.z0, j.z1, k);
+    e.mesh.position.set(f.x, lv - 0.06 + 4 * j.h * k * (1 - k), f.z);
+    e.mesh.rotation.set(0, f.head, Math.atan2(4 * j.h * (1 - 2 * k), j.len) * 0.9);
+    e.tail.rotation.y = Math.sin(perfT * 30 + f.ph) * 0.6;
+    if (k >= 1) { f.jump = null; e.mesh.rotation.z = 0; f.tx = f.x; f.tz = f.z; splashAt(f.x, lv, f.z, true); }
+    return;
+  }
+  if ((f.jumpCD -= dt) <= 0) {
+    f.jumpCD = rand(14, 40);
+    const len = rand(0.9, 1.5), x1 = f.x + Math.cos(f.head) * len, z1 = f.z - Math.sin(f.head) * len, l1 = waterLevelAt(x1, z1);
+    if (S.season !== 'winter' && l1 !== null && Math.abs(l1 - lv) < 0.01 && l1 - heightAt(x1, z1) > 0.15 && lv - heightAt(f.x, f.z) > 0.2) {
+      f.jump = { t: 0, dur: rand(0.75, 1.0), h: rand(0.45, 0.8), x0: f.x, z0: f.z, x1, z1, len };
+      splashAt(f.x, lv, f.z, false);
+      return;
+    }
+  }
   if (Math.hypot(f.tx - f.x, f.tz - f.z) < 0.25) { const q = waterPoint(f.x, f.z, 4, 0.3, lv); if (q) { f.tx = q.x; f.tz = q.z; } f.speed = rand(0.25, 0.6); }
   let diff = yaw(f.tx - f.x, f.tz - f.z) - f.head; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
   f.head += diff * Math.min(1, dt * 2.0);
@@ -3684,6 +4082,8 @@ const ICONS = {
   tree: '<path d="M12 21v-6"/><path d="M12 15c-4 0-6-2-6-5a6 6 0 0 1 12 0c0 3-2 5-6 5z"/>',
   flower: '<circle cx="12" cy="8" r="2"/><path d="M12 4.5a2 2 0 0 1 0 1.5M15.5 8a2 2 0 0 1-1.5 0M12 11.5a2 2 0 0 1 0-1.5M8.5 8A2 2 0 0 1 10 8"/><path d="M12 10.5V21M12 17c-2.5 0-4-1.5-4-3 2 0 4 1 4 3zM12 19c2.5 0 4-1.5 4-3-2 0-4 1-4 3z"/>',
   pond: '<path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  rockery: '<path d="M3 20l4-7 3 3 4-9 7 13z"/><path d="M14 7c.8 1.8-.2 3 .8 5"/>',
+  stream: '<path d="M5 3c2 3-1 5 1 8s5 2 6 5-1 4 1 5"/><path d="M10 3c2 3-1 5 1 8s5 2 6 5-1 4 1 5"/>',
   aqua: '<path d="M2 18c2.5-1.5 5-1.5 7.5 0s5 1.5 7.5 0 3.5-1 5-1"/><path d="M12 14c-2.5 0-4-1.8-4-4 1.6 0 2.8.6 4 2 1.2-1.4 2.4-2 4-2 0 2.2-1.5 4-4 4z"/><path d="M12 12c-1-1.5-1-3.5 0-5 1 1.5 1 3.5 0 5z"/>',
   terrain: '<path d="M2 19 9 9l4 5 3-3 6 8z"/>',
   rock: '<path d="M3 19.5 5.5 13l4-3.5 5 .5 4 4 2.5 5.5z"/><path d="M9.5 9.5 11 14l4.5-1M11 14l-3 5.5"/>',
@@ -3734,6 +4134,23 @@ const TOOLS = [
       if (!Object.keys(e.edits).length) { entities.splice(entities.indexOf(e), 1); scene.remove(e.group); return; }
       rebuildWater(true); clearWaterNature(); sfx('water');
     } },
+  { id: 'rockery', name: '假山', get r() { return S.rockR; }, hint: '按住涂抹堆出假山，在同一处反复涂会越堆越高，几笔之间会自己连成一座山；选“削低”可以往下削。再用“溪流”从山上往外画，水会从那里涌出、顺着山体流下来。',
+    begin(p) {
+      const e = makeEntity('rockery'); S.stroke.e = e; S.stroke.last = p; showRockeryDeco(false);
+      e.dist = (x, z) => { const a = e.edits.RK && e.edits.RK.get(cellAt(x, z)); return a > 0.2 ? -0.3 : 1.5; };
+    },
+    move(p) { S.stroke.last = p; },
+    frame(dt) { rockeryAt(S.stroke.e, S.stroke.last, dt, S.rockMode); },
+    end() {
+      const e = S.stroke.e;
+      if (!Object.keys(e.edits).length) { entities.splice(entities.indexOf(e), 1); scene.remove(e.group); showRockeryDeco(true); return; }
+      // 被山体盖住的树和花移走（不然会埋在山里）
+      for (const o of entities.slice()) if ((o.type === 'tree' || o.type === 'flower') && o.x !== undefined && sampleGrid(RK, o.x, o.z) > 0.25) removeEntity(o, true);
+      rebuildRockeryDeco(); sfx('stone');
+    } },
+  { id: 'stream', name: '溪流', r: 0.6, hint: '从假山上往池塘方向画一笔：水从起点涌出，顺着山体往下流，陡的地方变成白色的湍流和瀑布，坡缓下来溅起水花，再沿着这条线流进池塘。起点不在山上的，会在起点自动堆一座小山当水源。镜头靠近能听到潺潺的水声。',
+    begin(p) { S.stroke.pts = [p]; }, move(p) { addPt(p, 0.3); setRibbon(S.stroke.pts, S.streamW); },
+    end() { if (polyLen(S.stroke.pts) > 1.5) { const e = buildStream(S.stroke.pts); if (!e) toast('画长一点才能成一条小溪'); } else toast('画长一点才能成一条小溪'); } },
   { id: 'aqua', name: '水景', r: 0.8, hint: '在水面上按住刷出睡莲、荷花、浮萍、芦苇或菖蒲；后面几项分别调岸边石头、水中露出的大石、池底卵石、自带水草的多少，以及水的颜色。',
     begin(p) {
       S.stroke.acc = 99; S.stroke.timer = 0;
@@ -4134,6 +4551,11 @@ function renderOptions() {
     optEl.appendChild(chipGroup('水位', [{ n: '低', v: 0 }, { n: '中', v: 0.5 }, { n: '高', v: 1 }], S.waterLevel, v => S.waterLevel = v));
     optEl.appendChild(chipGroup('笔刷', [{ n: '小', v: 1.0 }, { n: '中', v: 1.7 }, { n: '大', v: 2.6 }], S.waterR, v => S.waterR = v));
   }
+  if (S.tool === 'rockery') {
+    optEl.appendChild(chipGroup('方式', [{ n: '堆高', v: 1 }, { n: '削低', v: -1 }], S.rockMode, v => S.rockMode = v));
+    optEl.appendChild(chipGroup('笔刷', [{ n: '小', v: 1.2 }, { n: '中', v: 1.8 }, { n: '大', v: 2.6 }], S.rockR, v => S.rockR = v));
+  }
+  if (S.tool === 'stream') optEl.appendChild(chipGroup('宽度', [{ n: '窄', v: 0.8 }, { n: '中', v: 1.2 }, { n: '宽', v: 1.8 }], S.streamW, v => S.streamW = v));
   if (S.tool === 'aqua') {
     const amt = [{ n: '无', v: 0 }, { n: '少', v: 0.5 }, { n: '多', v: 1 }];
     optEl.appendChild(chipGroup('种类', AQUA, S.aqua, v => S.aqua = v));
@@ -4198,6 +4620,28 @@ clearBtn.addEventListener('click', () => {
   for (const e of entities.slice().reverse()) removeEntity(e, true);
   toast('草地清空了，重新开始吧');
 });
+// 隐藏所有菜单（只留左上角这两个按钮）/ 全屏
+const appEl = document.getElementById('app'), hideBtn = document.getElementById('hideUi'), fullBtn = document.getElementById('fullBtn');
+const EYE = '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>', EYE_OFF = '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.2 6.2C3.6 8 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4.4-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>';
+function toggleUi() {
+  const on = appEl.classList.toggle('ui-hidden');
+  hideBtn.setAttribute('aria-pressed', on); hideBtn.title = on ? '显示菜单（H）' : '隐藏所有菜单（H）'; hideBtn.setAttribute('aria-label', on ? '显示菜单' : '隐藏所有菜单');
+  hideBtn.querySelector('svg').innerHTML = on ? EYE_OFF : EYE;
+}
+function toggleFull() {
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else { const req = el.requestFullscreen || el.webkitRequestFullscreen; if (req) { const r = req.call(el); if (r && r.catch) r.catch(() => toast('这个浏览器不让全屏')); } else toast('这个浏览器不支持全屏'); }
+}
+const FULL = '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', FULL_OFF = '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>';
+function onFullChange() {
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  fullBtn.setAttribute('aria-pressed', on); fullBtn.title = on ? '退出全屏（F）' : '全屏（F）'; fullBtn.setAttribute('aria-label', on ? '退出全屏' : '全屏');
+  fullBtn.querySelector('svg').innerHTML = on ? FULL_OFF : FULL;
+}
+hideBtn.addEventListener('click', toggleUi);
+fullBtn.addEventListener('click', toggleFull);
+document.addEventListener('fullscreenchange', onFullChange); document.addEventListener('webkitfullscreenchange', onFullChange);
 const muteBtn = document.getElementById('mute');
 muteBtn.addEventListener('click', () => { ensureAudio(); muted = !muted; muteBtn.textContent = muted ? '声音：关' : '声音：开'; });
 const musicBtn = document.getElementById('musicBtn');
@@ -4207,6 +4651,10 @@ window.addEventListener('keydown', ev => {
   // Esc：先放弃正在盖的房子 / 正在画的这一笔，没有的话就退出当前工具
   if (ev.key === 'Escape') { if (place) placeCancel(); else if (S.stroke) cancelStroke(); else if (S.tool) setTool(null); return; }
   if (ev.target.tagName === 'INPUT') return;
+  if (!ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    if (ev.key === 'h' || ev.key === 'H') { toggleUi(); return; }
+    if (ev.key === 'f' || ev.key === 'F') { toggleFull(); return; }
+  }
   const n = '1234567890-='.indexOf(ev.key);
   if (n >= 0 && TOOLS[n]) setTool(TOOLS[n].id);
 });
@@ -5053,8 +5501,9 @@ function applyStyle(key) {
   STONE_DARK = ST.stoneDark; MORTAR = ST.mortar; CAP = ST.cap;
   S.roof = ROOFS[0].hex; if (S.tree !== 'mix' && !ST.trees.includes(S.tree)) S.tree = 'mix';
   ROCK_A.set(ST.rockA); ROCK_B.set(ST.rockB); MOSS_A.set(ST.mossA); MOSS_B.set(ST.mossB);
+  terrainU.uRockA.value.copy(ROCK_A); terrainU.uRockB.value.copy(ROCK_B); terrainU.uMoss.value.copy(MOSS_A).lerp(MOSS_B, 0.4);
   KEYS.splice(0, KEYS.length, ...ST.keys);
-  waterMat.attenuationColor.set(waterCols()[2]);
+  waterMat.attenuationColor.set(waterCols()[2]); streamWaterMat.attenuationColor.copy(waterMat.attenuationColor);
   windowMat.color.set(ST.windowColor); windowMat.emissive.set(ST.windowGlow); windowMat.metalness = ST.windowMetal; windowMat.roughness = ST.windowRough;
   glowU.value = ST.glow; grassGlowU.value = ST.grassGlow;
   fireflies.m.color.set(ST.firefly);
@@ -5307,12 +5756,12 @@ function randomLayout() {
 function clearWorld() {
   for (const e of entities) { scene.remove(e.group); e.group.traverse(o => { if (o.isMesh && o.userData.own) o.geometry.dispose(); }); }
   entities.length = 0; tweens.length = 0; S.stroke = null; preview.visible = false;
-  D.fill(0); P.fill(0); WET.fill(0); WD.fill(0); WM.fill(0); WDP.fill(1); WLP.fill(1); GHIDE.fill(0);
-  litterDirty = true;
+  D.fill(0); P.fill(0); WET.fill(0); WD.fill(0); WM.fill(0); WDP.fill(1); WLP.fill(1); SD.fill(0); RK.fill(0); GHIDE.fill(0);
+  litterDirty = true; rebuildRockeryDeco();
 }
 function setTerrain(t) {
   TER = t;
-  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const k = j * N + i; BASE[k] = baseHeight(gxy(i), gxy(j)); H[k] = BASE[k]; }
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const k = j * N + i; BASE[k] = baseHeight(gxy(i), gxy(j)); H[k] = BASE[k] + SD[k] + RK[k]; }
 }
 const randomTerrain = () => ({ ox: rand(0, 200), oz: rand(0, 200), amp: rand(0.8, 3.0), freq: rand(0.045, 0.085), lift: rand(0.1, 0.5) });
 function loadScene(key, random) {
@@ -5392,6 +5841,7 @@ function frame(fixedDt) {
   for (let i = puffs.length - 1; i >= 0; i--) {
     const p = puffs[i]; p.t += dt; const k = p.t / p.life;
     if (k >= 1) { scene.remove(p.s); puffPool.push(p.s); puffs.splice(i, 1); continue; }
+    if (p.g) p.vy -= p.g * dt;   // 水花会落回去
     p.s.position.x += p.vx * dt; p.s.position.y += p.vy * dt; p.s.position.z += p.vz * dt;
     // 炊烟：越往上越被风带走，风大时也升得更低、更扁
     if (p.wind) { const w = WIND.k * (0.25 + 1.0 * k) * (0.7 + 0.6 * gustAt(p.s.position.x, p.s.position.z)) + 0.08; p.s.position.x += WIND.x * w * dt; p.s.position.z += WIND.z * w * dt; p.s.position.y -= p.vy * dt * (1 - 1 / (1 + 0.3 * WIND.k)); }
@@ -5411,7 +5861,7 @@ function frame(fixedDt) {
     sunGlowEl.style.setProperty('--sx', (clamp((_p.x + 1) / 2, -0.4, 1.4) * 100).toFixed(1) + '%');
     sunGlowEl.style.setProperty('--sy', (clamp((1 - _p.y) / 2, -0.4, 1.4) * 100).toFixed(1) + '%');
   } else sunGlowEl.style.opacity = '0';
-  updateWeather(dt); updateFalling(dt); updateWisps(dt); updateBirds(dt); placeHandles();
+  updateWeather(dt); updateFalling(dt); updateWisps(dt); updateBirds(dt); placeHandles(); updateStreams(dt); updateBrookAudio(dt);
   composer.render();
   if (first) { first = false; document.getElementById('loading').classList.add('gone'); }
 }
