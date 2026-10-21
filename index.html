@@ -50,6 +50,8 @@
     padding: 12px 18px 12px; max-width: min(320px, calc(100vw - 32px));
   }
   .title h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 30px; letter-spacing: 0.08em; line-height: 1.1; }
+  .title .hub { display: inline-block; margin-bottom: 4px; font-size: 12px; color: var(--ink-soft); text-decoration: none; }
+  .title .hub:hover { color: var(--ink); }
   .title p { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; text-wrap: balance; }
 
   .side {
@@ -58,6 +60,9 @@
   }
   .side .lab { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
   .side .lab b { font-family: var(--font-display); font-weight: 400; font-size: 17px; color: var(--slate); }
+  .side .moonrow { display: flex; align-items: baseline; gap: 6px; }
+  .side .moonbtn { font: inherit; font-family: var(--font-display); font-size: 17px; color: var(--slate); background: none; border: 0; border-bottom: 1px dashed var(--line); padding: 0; cursor: pointer; }
+  .side .moonbtn:hover { color: var(--ink); }
   input[type=range] { width: 100%; accent-color: var(--slate); margin: 0; }
   .btnrow { display: flex; gap: 6px; }
   .btn {
@@ -138,6 +143,7 @@
   <div class="vignette"></div>
 
   <header class="card title">
+    <a class="hub" href="https://hitanorain.github.io/" title="回到游戏厅主页">← 游戏厅</a>
     <h1>小小林间</h1>
     <p id="subtitle">Tiny Glade 风格建造 demo。没有网格，随手拖拽，城墙、房屋、小路和花树会自己长出细节。</p>
     <div class="chips scenes" id="sceneChips"></div>
@@ -149,11 +155,15 @@
 
   <aside class="card side">
     <label class="lab" for="tod"><span>时辰</span><b id="todName">午后</b></label>
-    <input type="range" id="tod" min="0" max="1" step="0.001" value="0.7">
+    <input type="range" id="tod" min="0" max="1" step="0.0005" value="0.66" aria-label="时辰">
+    <div class="lab"><span>流逝</span><span class="moonrow">月相 <button type="button" class="moonbtn" id="moonBtn" title="点一下换下一种月相">满月</button></span></div>
+    <div class="chips" id="flowChips"></div>
     <div class="lab"><span>天气</span><b id="wxName">晴</b></div>
     <div class="chips" id="wxChips"></div>
     <div class="lab"><span>季节</span><b id="seasonName">秋</b></div>
     <div class="chips" id="seasonChips"></div>
+    <div class="lab"><span>风</span><b id="windName">微风</b></div>
+    <div class="chips" id="windChips"></div>
     <div class="btnrow">
       <button class="btn" id="undo" title="Ctrl+Z" aria-label="撤销">撤销</button>
       <button class="btn" id="clear">清空</button>
@@ -165,7 +175,8 @@
   </aside>
 
   <div class="help">
-    左键拖拽：建造<br>
+    左键拖拽：建造（没选工具时转视角）<br>
+    Esc：取消这次建造 / 退出工具<br>
     右键拖拽：旋转视角<br>
     Shift+右键 / 中键：平移<br>
     滚轮：缩放　Ctrl+Z：撤销
@@ -195,6 +206,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 let ST = null;   // 当前场景风格（STYLES 里的一项）
 
@@ -293,7 +305,7 @@ camera.position.set(36 * WS, 31 * WS, 40 * WS);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.08;
 controls.minDistance = 12; controls.maxDistance = 90 * WS;
-controls.minPolarAngle = 0.18; controls.maxPolarAngle = 1.33;
+controls.minPolarAngle = 0.18; controls.maxPolarAngle = 1.47;
 controls.screenSpacePanning = false; controls.zoomToCursor = true;
 controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_ROTATE };
@@ -316,17 +328,46 @@ scene.add(sun, sun.target);
 // 天空球：渐变 + 太阳光晕
 const skyU = {
   top: { value: new THREE.Color() }, hor: { value: new THREE.Color() }, bot: { value: new THREE.Color() },
-  sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Color() }, gnd: { value: new THREE.Color('#58703a') }
+  sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunCol: { value: new THREE.Color() }, gnd: { value: new THREE.Color('#58703a') },
+  moonDir: { value: new THREE.Vector3(0, 1, 0) }, moonPhase: { value: 0.5 }, moonK: { value: 0 }, starK: { value: 0 }, uT: { value: 0 }
 };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(450, 32, 16), new THREE.ShaderMaterial({
   uniforms: skyU, side: THREE.BackSide, depthWrite: false, fog: false,
   vertexShader: `varying vec3 vDir; void main(){ vDir = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }`,
   fragmentShader: `uniform vec3 top; uniform vec3 hor; uniform vec3 bot; uniform vec3 sunCol; uniform vec3 sunDir; uniform vec3 gnd; varying vec3 vDir;
+    uniform vec3 moonDir; uniform float moonPhase, moonK, starK, uT;
+    float hash3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
     void main(){
       vec3 d = normalize(vDir); float y = d.y;
       vec3 c = y > 0.0 ? mix(hor, top, pow(clamp(y,0.0,1.0), 0.55)) : mix(hor, bot, pow(clamp(-y,0.0,1.0), 0.45));
       float s = max(dot(d, normalize(sunDir)), 0.0);
       c += sunCol * (pow(s, 60.0) * 0.55 + pow(s, 6.0) * 0.10);
+      #ifndef ENV
+        // 日轮
+        c += sunCol * smoothstep(0.99935, 0.9997, s) * 2.2;
+        // 星星：天球按格子撒点，夜里一闪一闪
+        if (starK > 0.01 && y > -0.01) {
+          vec3 q = d * 120.0, id = floor(q); float hs = hash3(id);
+          if (hs > 0.965) {
+            float st = smoothstep(0.24, 0.0, length(fract(q) - 0.5)) * (0.35 + 0.65 * (hs - 0.965) / 0.035);
+            c += vec3(0.85, 0.9, 1.0) * st * starK * (0.55 + 0.45 * sin(uT * 2.7 + hs * 300.0)) * smoothstep(-0.01, 0.04, y) * 2.6;
+          }
+        }
+        // 月亮：圆盘上按月相算明暗，亮面带一点斑驳的月海；夜里周围一圈淡淡的月晕
+        vec3 md = normalize(moonDir); float mc = dot(d, md);
+        if (moonK > 0.001 && mc > 0.995) {
+          vec3 rt = normalize(cross(md, vec3(0.0, 1.0, 0.0))), up = cross(rt, md);
+          vec2 mp = vec2(dot(d, rt), dot(d, up)) / 0.036; float r2 = dot(mp, mp);
+          if (r2 < 1.0) {
+            vec3 n = vec3(mp, sqrt(1.0 - r2)); float a = moonPhase * 6.2832;
+            float lit = smoothstep(-0.06, 0.12, dot(n, vec3(sin(a), 0.0, -cos(a))));
+            float mare = 0.82 + 0.18 * sin(mp.x * 6.3 + 1.7) * sin(mp.y * 5.1 - 0.6) + 0.06 * sin(mp.x * 17.0 - mp.y * 13.0);
+            vec3 mcol = vec3(1.0, 0.97, 0.88) * (0.035 + 1.25 * lit * mare);
+            c = mix(c, c * 0.35 + mcol, smoothstep(1.0, 0.92, r2) * moonK);
+          }
+        }
+        c += vec3(0.55, 0.6, 0.8) * pow(max(mc, 0.0), 900.0) * 0.5 * moonK * (1.0 - cos(moonPhase * 6.2832)) * 0.5 * starK;
+      #endif
       #ifdef ENV
         if (y < 0.0) c = mix(hor * 0.85, gnd, smoothstep(0.0, 0.2, -y));
         c += sunCol * pow(s, 900.0) * 40.0;
@@ -355,6 +396,19 @@ const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, 
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.22, 0.45, 1.2);
 composer.addPass(bloom);
+// 调色：随时辰给画面整体染色（夜里蓝紫、晨昏暖金），暗部可以抬一点颜色，饱和度也跟着变
+const gradeU = { tDiffuse: { value: null }, uTint: { value: new THREE.Color(1, 1, 1) }, uLift: { value: new THREE.Color(0, 0, 0) }, uSat: { value: 1 } };
+const grade = new ShaderPass({
+  uniforms: gradeU,
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform vec3 uTint, uLift; uniform float uSat; varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      vec3 g = mix(vec3(l), c.rgb, uSat) * uTint + uLift * (1.0 - clamp(l * 2.5, 0.0, 1.0));
+      gl_FragColor = vec4(g, c.a);
+    }`
+});
+composer.addPass(grade);
 composer.addPass(new OutputPass());
 scene.fog = new THREE.Fog('#f2e6d6', 85, 230);
 
@@ -363,6 +417,9 @@ const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 12);
 const CYL_LO = new THREE.CylinderGeometry(1, 1, 1, 5, 1, true);
 const TRUNK = new THREE.CylinderGeometry(0.65, 1, 1, 7);
+const TWIG = new THREE.CylinderGeometry(0.18, 1, 1, 5, 1, true);
+// 枝干末端的尖头：底面和 TRUNK 顶面一样是七边形、半径 1，接在圆柱顶上把末端收尖
+const TIP = new THREE.ConeGeometry(1, 1, 7, 1, true).translate(0, 0.5, 0);
 const CONE = new THREE.ConeGeometry(1, 1, 10);
 const CONE4 = new THREE.ConeGeometry(1, 1, 4);
 const ICO = new THREE.IcosahedronGeometry(1, 0);
@@ -657,7 +714,8 @@ const P = new Float32Array(NN), WET = new Float32Array(NN), WD = new Float32Arra
 const WM = new Float32Array(NN), WB = new Float32Array(NN), DW = new Float32Array(NN), WLV = new Float32Array(NN).fill(NaN), WETW = new Float32Array(NN);
 const BC = new Float32Array(NN * 3);
 const WDP = new Float32Array(NN).fill(1);   // 每个格子的水深系数（浅 0.5 / 中 1 / 深 1.8）
-const GRIDS = { D, P, WET, WD, WM, WDP };
+const WLP = new Float32Array(NN).fill(1);   // 每个格子的水位系数（低 0 / 中 0.5 / 高 1）：水面离岸边地面有多远
+const GRIDS = { D, P, WET, WD, WM, WDP, WLP };
 const gxy = i => -L + i * CELL;
 
 let TER = { ox: 11.3, oz: -4.1, amp: 1.6, freq: 0.06, lift: 0.25 };
@@ -696,6 +754,7 @@ const tGeo = new THREE.BufferGeometry();
   tGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(NN * 3), 3));
   tGeo.setAttribute('aMix', new THREE.BufferAttribute(new Float32Array(NN * 4), 4));
+  tGeo.setAttribute('aTech', new THREE.BufferAttribute(new Float32Array(NN), 1));
   tGeo.setIndex(idx);
 }
 const CAUSTIC_GLSL = `
@@ -708,11 +767,13 @@ float caustic(vec2 p, float t) {
   return pow(1.0 - clamp(abs(c / 3.0), 0.0, 1.0), 7.0);
 }`;
 const terrainU = { tGrass: { value: texGrass }, tDirt: { value: texDirt }, tSand: { value: texSand }, uTime: { value: 0 }, uSun: { value: 1 }, uGrassTint: { value: new THREE.Color(1, 1, 1) }, uWet: { value: 0 }, uDirtTint: { value: new THREE.Color(1, 1, 1) }, uSandTint: { value: new THREE.Color(1, 1, 1) }, uDirtGrey: { value: 0 } };
+// 科技地面（未来风）：方形地砖 + 细细的灯缝，草只长在一块块种植池里（aTech = 种植池遮罩，restyleGround 里按 planterMask 填）
+Object.assign(terrainU, { uTech: { value: 0 }, uTechGlow: { value: 0 }, uTechTint: { value: new THREE.Color(1, 1, 1) } });
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0, envMapIntensity: 0.3 });
 terrainMat.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, terrainU);
-  sh.vertexShader = 'attribute vec4 aMix;\nvarying vec4 vMix;\nvarying vec3 vTW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
-    '#include <begin_vertex>\n vMix = aMix; vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+  sh.vertexShader = 'attribute vec4 aMix;\nattribute float aTech;\nvarying vec4 vMix;\nvarying float vTech;\nvarying vec3 vTW;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+    '#include <begin_vertex>\n vMix = aMix; vTech = aTech; vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
   sh.fragmentShader = 'uniform sampler2D tGrass; uniform sampler2D tDirt; uniform sampler2D tSand; uniform float uTime; uniform float uSun; uniform vec3 uGrassTint; uniform float uWet; uniform vec3 uDirtTint; uniform vec3 uSandTint; uniform float uDirtGrey;\nvarying vec4 vMix;\nvarying vec3 vTW;\n' + CAUSTIC_GLSL + '\n' +
     sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
     vec2 tuv = vTW.xz * 0.3;
@@ -720,6 +781,19 @@ terrainMat.onBeforeCompile = sh => {
     vec3 di = mix(texture2D(tDirt, tuv * 1.2).rgb, texture2D(tDirt, tuv * 0.45 + 0.17).rgb, 0.3);
     di = mix(di, vec3(dot(di, vec3(0.333))), uDirtGrey) * uDirtTint;
     vec3 sa = texture2D(tSand, tuv * 1.15).rgb * uSandTint;
+    float techSeam = 0.0;
+    if (uTech > 0.5) {
+      vec2 pq = vTW.xz / 1.2, cell = floor(pq), f = fract(pq);
+      techSeam = 1.0 - smoothstep(0.0, 0.035, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)));
+      float hv = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+      vec3 panel = mix(vec3(0.80, 0.83, 0.86), vec3(0.70, 0.74, 0.79), hv) * uTechTint;
+      if (hv > 0.9) panel *= vec3(0.86, 0.9, 0.95);
+      panel = mix(panel, vec3(0.32, 0.4, 0.48), techSeam * 0.75);
+      float pl = vTech, curb = smoothstep(0.22, 0.45, pl) * (1.0 - smoothstep(0.5, 0.7, pl));
+      gr = mix(panel, gr, smoothstep(0.55, 0.72, pl));
+      gr = mix(gr, vec3(0.93, 0.95, 0.96), curb);
+      techSeam *= 1.0 - smoothstep(0.2, 0.4, pl);
+    }
     vec3 al = mix(gr, di, vMix.x);
     al = mix(al, sa, vMix.y);
     al = mix(al, al * 0.85 + vec3(0.07, 0.07, 0.05), vMix.z);
@@ -728,8 +802,18 @@ terrainMat.onBeforeCompile = sh => {
     float ca = caustic(vTW.xz, uTime) * smoothstep(0.03, 0.3, wd) * (1.0 - smoothstep(1.0, 2.0, wd));
     al += vec3(0.85, 1.0, 0.8) * ca * 0.42 * uSun;
     al *= 1.0 - 0.3 * uWet * (1.0 - smoothstep(0.0, 0.05, wd));
-    diffuseColor.rgb = al;`);
+    diffuseColor.rgb = al;`).replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+    totalEmissiveRadiance += vec3(0.25, 0.9, 1.0) * techSeam * uTechGlow * (1.0 - vMix.x) * (1.0 - smoothstep(0.0, 0.3, vMix.w));`);
+  sh.fragmentShader = 'uniform float uTech, uTechGlow;\nuniform vec3 uTechTint;\nvarying float vTech;\n' + sh.fragmentShader;
 };
+// 种植池：按 3.4 米的格子，约四成格子是一块方形种植池（四边留出地砖），相邻的池子之间隔着白色池沿
+const PL_CELL = 3.4;
+function planterMask(x, z) {
+  const ci = Math.floor(x / PL_CELL), cj = Math.floor(z / PL_CELL);
+  if (hash2(ci + 31, cj - 17) > 0.42) return 0;
+  const u = x - (ci + 0.5) * PL_CELL, v = z - (cj + 0.5) * PL_CELL;
+  return smooth(0.25, -0.25, Math.max(Math.abs(u), Math.abs(v)) - (PL_CELL / 2 - 0.4));
+}
 addSnow(terrainMat, 'terrain', 1);
 const terrain = new THREE.Mesh(tGeo, terrainMat);
 terrain.receiveShadow = true;
@@ -786,7 +870,20 @@ updateTerrain(true);
 
 // ================= 草叶（实例化 + 风吹摆动） =================
 const GN = Math.round(30000 * Math.min((R / 26) ** 2, 1.6));
-const grassU = { uTime: { value: 0 }, uWind: { value: 1 }, uTint: { value: new THREE.Color(1, 1, 1) } };
+const grassU = { uTime: { value: 0 }, uWind: { value: 1 }, uTint: { value: new THREE.Color(1, 1, 1) }, uWindDir: { value: new THREE.Vector2(1, 0) }, uSwayT: { value: 0 }, uGustT: { value: 0 } };
+// 风：方向慢慢转，强度随天气和"风"档位变化；阵风是一道道顺风推进的波，草、花、树叶、树、炊烟、旗子和落叶都按同一个波起伏
+// 摆动相位 swayT / gustT 按帧累加（而不是 时间×风力），风力变化时不会跳帧
+const WIND = { k: 1, target: 1, ang: 0.6, x: Math.cos(0.6), z: Math.sin(0.6), swayT: 0, gustT: 0 };
+const WINDS = [{ v: 'calm', n: '无风', k: 0.12 }, { v: 'breeze', n: '微风', k: 1 }, { v: 'strong', n: '大风', k: 2.3 }];
+function gustAt(x, z) { const w = 0.5 + 0.5 * Math.sin((x * WIND.x + z * WIND.z) * 0.45 - WIND.gustT); return w * w; }
+function updateWind(dt, t) {
+  WIND.k += (WIND.target - WIND.k) * Math.min(1, dt * 0.5);
+  WIND.ang += dt * 0.012 * Math.sin(t * 0.031) * (1 + WIND.k * 0.5);
+  WIND.x = Math.cos(WIND.ang); WIND.z = Math.sin(WIND.ang);
+  WIND.swayT += dt * (1.3 + WIND.k * 0.7); WIND.gustT += dt * (0.6 + WIND.k * 0.9);
+  grassU.uWind.value = WIND.k * (0.85 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.23) * Math.sin(t * 0.37)));
+  grassU.uWindDir.value.set(WIND.x, WIND.z); grassU.uSwayT.value = WIND.swayT; grassU.uGustT.value = WIND.gustT;
+}
 // 弯曲的草叶：四段，越往上越窄、越向前弯，根部深、叶尖亮
 const bladeGeo = (() => {
   const Hs = [0, 0.13, 0.25, 0.35, 0.44], Wd = [0.055, 0.046, 0.034, 0.02, 0], Bd = [0, 0.012, 0.035, 0.068, 0.11], C = [0.42, 0.66, 0.88, 1.05, 1.18];
@@ -805,24 +902,34 @@ const bladeGeo = (() => {
   g.setIndex(idx);
   return g;
 })();
-// 风吹摆动：草叶、花朵共用（实例化时按实例位置错开相位）；uWind 由天气控制
+// 世界空间的位移 d 换算到实例/模型的局部坐标（旋转 + 等比缩放）：m3⁻¹d = m3ᵀd · |d|² / |m3ᵀd|²
+const WIND_GLSL = `
+  vec3 windLocal(vec3 d, mat3 m3) { vec3 l = d * m3; return l * dot(d, d) / max(dot(l, l), 1e-9); }`;
+// 风吹摆动：草叶、花朵共用。整体顺风弯下（阵风经过时弯得更多），再叠加一点来回抖动；草尖在阵风里微微发亮
 function addSway(mat, hNorm, amp, tint = false) {
   mat.onBeforeCompile = sh => {
-    sh.uniforms.uTime = grassU.uTime; sh.uniforms.uWind = grassU.uWind; sh.uniforms.uTint = grassU.uTint;
+    Object.assign(sh.uniforms, { uWind: grassU.uWind, uTint: grassU.uTint, uWindDir: grassU.uWindDir, uSwayT: grassU.uSwayT, uGustT: grassU.uGustT });
     // 双面草叶/花瓣背面不翻转法线，避免背光那一半变成黑色
-    let fs = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  normal = normalize(vNormal);');
-    if (tint) fs = 'uniform vec3 uTint;\n' + fs.replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= uTint;');
+    let fs = 'varying float vGust;\n' + sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  normal = normalize(vNormal);');
+    if (tint) fs = 'uniform vec3 uTint;\n' + fs.replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= uTint * (1.0 + 0.16 * vGust);');
     sh.fragmentShader = fs;
-    sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+    sh.vertexShader = 'uniform float uWind, uSwayT, uGustT;\nuniform vec2 uWindDir;\nvarying float vGust;\n' + WIND_GLSL + '\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       float hh = clamp(position.y / ${hNorm.toFixed(3)}, 0.0, 1.0);
       #ifdef USE_INSTANCING
-        vec2 ip = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+        vec2 ip = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xz;
+        mat3 m3 = mat3(modelMatrix) * mat3(instanceMatrix);
       #else
         vec2 ip = (modelMatrix * vec4(position, 1.0)).xz;
+        mat3 m3 = mat3(modelMatrix);
       #endif
-      float w = sin(uTime * (1.2 + uWind * 0.5) + ip.x * 0.32 + ip.y * 0.21) + 0.5 * sin(uTime * 2.4 * uWind + ip.x * 0.9 - ip.y * 0.6);
-      transformed.x += w * ${amp.toFixed(3)} * uWind * hh * hh;
-      transformed.z += w * ${(amp * 0.55).toFixed(3)} * uWind * hh * hh;`);
+      float gst = 0.5 + 0.5 * sin(dot(ip, uWindDir) * 0.45 - uGustT); gst *= gst;
+      float fl = 0.6 * sin(uSwayT + ip.x * 0.9 - ip.y * 0.6) + 0.4 * sin(uSwayT * 1.73 + ip.x * 1.7 + ip.y * 1.3);
+      float bend = uWind * (0.2 + 0.8 * gst), f2 = hh * hh;
+      vec3 wd = vec3(uWindDir.x, 0.0, uWindDir.y), sd = vec3(-uWindDir.y, 0.0, uWindDir.x);
+      vec3 off = (wd * (bend * 1.15 + fl * (0.25 + 0.3 * uWind)) + sd * fl * (0.15 + 0.2 * uWind)) * ${amp.toFixed(3)} * f2;
+      off.y = -dot(off, off) * ${(0.5 / hNorm).toFixed(3)} / max(hh, 0.2);
+      transformed += windLocal(off, m3);
+      vGust = gst * min(uWind, 2.0) * hh;`);
   };
 }
 const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
@@ -853,7 +960,7 @@ const BS = 2, NB = Math.ceil(2 * L / BS), buckets = Array.from({ length: NB * NB
 }
 function setGrass(k) {
   const y = heightAt(GX[k], GZ[k]);
-  if (GHIDE[k] || GHIDEW[k] || (ST && GD[k] > ST.grassDensity)) _m.makeScale(0, 0, 0);
+  if (GHIDE[k] || GHIDEW[k] || (ST && GD[k] > ST.grassDensity) || (ST && ST.tech && planterMask(GX[k], GZ[k]) < 0.5)) _m.makeScale(0, 0, 0);
   else _m.compose(_p.set(GX[k], y - 0.02, GZ[k]), _q.setFromAxisAngle(UP, GR[k]), _s.set(GS[k], GS[k] * GSH[k] * (ST ? ST.grassH : 1), GS[k]));
   grass.setMatrixAt(k, _m);
   for (const md of meadow) {
@@ -875,7 +982,7 @@ function addMeadow(geo, mat, chance, scale, opt = {}) {
   for (let k = 0; k < GN; k++) if (Math.random() < chance(GX[k], GZ[k])) { idx[k] = list.length; list.push(k); }
   const n = list.length, inst = new THREE.InstancedMesh(geo, mat, n);
   inst.receiveShadow = true; inst.castShadow = !!opt.cast; inst.frustumCulled = false;
-  const md = { inst, idx, seasons: opt.seasons || null, dy: opt.dy || 0, sx: new Float32Array(n), sy: new Float32Array(n), sz: new Float32Array(n), tilt: new Float32Array(n * 2) };
+  const md = { inst, idx, seasons: opt.seasons || null, only: opt.only || null, hide: opt.hide || null, dy: opt.dy || 0, sx: new Float32Array(n), sy: new Float32Array(n), sz: new Float32Array(n), tilt: new Float32Array(n * 2) };
   list.forEach((k, i) => {
     const sc = scale();
     md.sx[i] = sc[0]; md.sy[i] = sc[1]; md.sz[i] = sc[2];
@@ -914,12 +1021,13 @@ function paintMax(e, name, k, value) {
   const arr = GRIDS[name];
   if (value > arr[k]) editGrid(e, name, k, Math.min(1, value) - arr[k]);
 }
-const TYPE_NAME = { wall: '城墙', tower: '塔楼', house: '房屋', path: '小路', fence: '栅栏', tree: '树', flower: '花丛', pond: '池塘', water: '水域', fish: '鱼', rock: '岩石', terrain: '地形', sheep: '绵羊' };
+const TYPE_NAME = { wall: '城墙', tower: '塔楼', house: '房屋', path: '小路', fence: '栅栏', tree: '树', flower: '花丛', pond: '池塘', water: '水域', fish: '鱼', aquatic: '水草', pool: '泳池', rock: '岩石', terrain: '地形', sheep: '绵羊' };
 // 新建筑会把压在下面的树和花挤走
 function clearNature(e) {
   for (const o of entities.slice()) if ((o.type === 'tree' || o.type === 'flower') && o !== e && e.dist(o.x, o.z) < 0.25) removeEntity(o, true);
 }
-function removeEntity(e, quiet = false) {
+// instant：编辑时用，旧的立刻消失（不播缩小动画），好让新的原地接上
+function removeEntity(e, quiet = false, instant = false) {
   if (e.dead) return;
   e.dead = true;
   entities.splice(entities.indexOf(e), 1);
@@ -933,7 +1041,7 @@ function removeEntity(e, quiet = false) {
     for (const [k, a] of map) { arr[k] -= a; if (name === 'D') H[k] = BASE[k] + D[k] + DW[k]; }
     terrainChanged = true;
   }
-  if (e.edits.WM || e.edits.WDP) rebuildWater(true);
+  if (e.edits.WM || e.edits.WDP || e.edits.WLP) rebuildWater(true);
   else if (terrainChanged) { updateTerrain(true); refreshGrass([-L, -L, L, L]); }
   const kids = [];
   e.group.traverse(o => { if (o !== e.group && (o.isMesh || o.isGroup) && o.parent === e.group) kids.push(o); });
@@ -942,6 +1050,11 @@ function removeEntity(e, quiet = false) {
     const c = new THREE.Vector3(); new THREE.Box3().setFromObject(e.group).getCenter(c);
     if (Number.isFinite(c.x)) dust(c.x, c.z, 5, 1.2);
     sfx('pop');
+  }
+  if (instant) {
+    scene.remove(e.group);
+    e.group.traverse(o => { if (o.isMesh && o.userData.own) o.geometry.dispose(); });
+    return;
   }
   tween(0.28, 0, k => {
     const s = Math.max(0.001, (1 - k) * (1 - k));
@@ -954,16 +1067,20 @@ function removeEntity(e, quiet = false) {
 
 // ================= 补间动画 =================
 const tweens = [];
+let quietBuild = false;   // 编辑时原地重建：跳过升起、落下、弹出的动画和尘土
 function tween(dur, delay, fn, done) { tweens.push({ t: -delay, dur, fn, done }); }
 function rise(obj, delay = 0, dur = 0.55, snd) {
+  if (quietBuild) return;
   obj.scale.y = 0.001; let played = false;
   tween(dur, delay, k => { if (!played) { played = true; if (snd) sfx(snd); } obj.scale.y = Math.max(0.001, easeOutBack(k)); });
 }
 function pop(obj, delay = 0, dur = 0.5, snd) {
+  if (quietBuild) return;
   const target = obj.scale.clone(); obj.scale.setScalar(0.001); let played = false;
   tween(dur, delay, k => { if (!played) { played = true; if (snd) sfx(snd); } obj.scale.copy(target).multiplyScalar(Math.max(0.001, easeOutBack(k))); });
 }
 function drop(obj, delay = 0, dur = 0.7, height = 3.5, snd) {
+  if (quietBuild) return;
   const y = obj.position.y; obj.position.y = y + height; obj.visible = false; let played = false;
   tween(dur, delay, k => {
     obj.visible = true; obj.position.y = y + height * (1 - easeOutBounce(k));
@@ -976,10 +1093,10 @@ const puffs = [], puffPool = [];
 function spawnPuff(x, y, z, o = {}) {
   let s = puffPool.pop();
   if (!s) { s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, depthWrite: false })); }
-  s.material.color.set(o.color || '#fffaf0');
+  s.material.color.set(o.color || '#fffaf0').multiplyScalar(1 - 0.7 * night);   // 夜里烟和尘土跟着暗下去
   s.position.set(x, y, z);
   scene.add(s);
-  puffs.push({ s, t: 0, life: o.life || 0.9, vx: o.vx || 0, vy: o.vy ?? 0.5, vz: o.vz || 0, size: o.size || 0.6, grow: o.grow ?? 1.6, op: o.opacity ?? 0.75 });
+  puffs.push({ s, t: 0, life: o.life || 0.9, vx: o.vx || 0, vy: o.vy ?? 0.5, vz: o.vz || 0, size: o.size || 0.6, grow: o.grow ?? 1.6, op: o.opacity ?? 0.75, wind: o.wind || 0 });
 }
 function dust(x, z, n = 6, spread = 1) {
   const y = heightAt(x, z) + 0.2;
@@ -1158,6 +1275,21 @@ const TRACKS = {
     iSaw(t, tones[(b * 2) % 4], e * 0.45, 0.026, cut); iSaw(t + e / 2, tones[(b * 2 + 1) % 4], e * 0.45, 0.02, cut);
     if (b % 4 === 2 && Math.random() < 0.3) iFlute(t, pick([69, 72, 74, 76, 79]), e * 2, 0.026, 0);
   } },
+  // 别墅：慢版 bossa nova——电钢琴七和弦按 bossa 节奏型拨奏，低音走根音和五音，沙锤轻轻地沙沙响，偶尔一句长笛
+  villa: { bpm: 92, wet: 0.32, delay: 0.16, step(s, t, e) {
+    const CH = [[57, 60, 64, 67], [62, 65, 69, 72], [55, 59, 62, 65], [52, 56, 59, 62]], b = s % 16, c = CH[Math.floor(s / 16) % 4];
+    if ([0, 3, 6, 10, 13].includes(b)) for (const m of c) iPluck(t + rand(0, 0.012), m, 0.028, 0.8, 1700);
+    if (b === 0) iPad(t, c.map(m => m + 12), e * 16, 0.008, 'sine', 1100);
+    if (b === 0 || b === 6) iBass(t, c[0] - 24, e * 1.6, 0.13);
+    if (b === 8 || b === 14) iBass(t, c[0] - 17, e * 1.6, 0.1);
+    iHat(t, b % 2 ? 0.006 : 0.011, b % 2 ? 8000 : 6000, 0.035);
+    if (b === 4 || b === 12) iHat(t, 0.018, 2600, 0.025);
+    if (b % 4 === 2 && Math.random() < 0.3) {
+      const SC = [69, 71, 72, 74, 76, 79, 81];
+      MUSIC.mel = clamp(MUSIC.mel + Math.floor(rand(-2, 3)), 0, SC.length - 1);
+      iFlute(t, SC[MUSIC.mel], e * rand(2, 4), 0.026, 0.18);
+    }
+  } },
   oriental: { bpm: 62, wet: 0.55, delay: 0.14, step(s, t, e) {
     const IN = [62, 63, 67, 69, 70, 74, 75, 79, 81, 82, 86], b = s % 16, bar = Math.floor(s / 16);
     if (s % 32 === 0) iPad(t, [50, 57, 62], e * 32, 0.012, 'sine', 600);
@@ -1192,11 +1324,12 @@ function setMusicStyle(key) {
 }
 
 // ================= 状态 =================
-const S = { style: 'rustic', waterDepth: 1.0, waterR: 1.7, waterMode: 'add', tool: 'wall', roof: ROOFS[0].hex, tree: 'mix', flower: 'mix', fish: 'mix', sculpt: 1, stroke: null, season: 'autumn', weather: 'sunny' };
+const S = { style: 'rustic', waterDepth: 1.0, waterR: 1.7, waterMode: 'add', tool: 'wall', roof: ROOFS[0].hex, tree: 'mix', flower: 'mix', fish: 'mix', sculpt: 1, stroke: null, season: 'autumn', weather: 'sunny', wind: 'breeze',
+  waterLevel: 1, timeFlow: 'slow', editMode: 'win', aqua: 'mix', shoreRock: 1, waterRock: 0.5, pebble: 1, autoPlant: 1, waterTint: 'style' };
 
 // ================= 建造：城墙与塔楼 =================
 function wallSegment(b, len, Hh, T, merlon, vines, gb = null) {
-  if (ST.build === 'scifi' || ST.build === 'oriental') return wallSegmentAlt(b, len, Hh, T, merlon, vines, gb);
+  if (ST.build === 'scifi' || ST.build === 'oriental' || ST.build === 'villa') return wallSegmentAlt(b, len, Hh, T, merlon, vines, gb);
   const bury = 0.8, rowH = 0.36, rows = Math.round(Hh / rowH), base = bury + 0.3;
   b.add(BOX, jc(STONE_DARK), M(0, base / 2, 0, 0, 0, 0, len + 0.04, base, T + 0.14));
   b.add(BOX, MORTAR, M(0, base + rows * rowH / 2, 0, 0, 0, 0, len, rows * rowH, T - 0.08));
@@ -1284,7 +1417,7 @@ function addTower(e, x, z, delay = 0, roofHex = S.roof) {
   e.flags.push(flag);
   e.group.add(roof);
   drop(roof, delay + 0.45, 0.75, 3.5, 'roof');
-  tween(0.01, delay + 0.75, () => {}, () => dust(x, z, 8, 1.6));
+  if (!quietBuild) tween(0.01, delay + 0.75, () => {}, () => dust(x, z, 8, 1.6));
   (e.towers || (e.towers = [])).push({ x, z });
   hideGrass(e, [x - 1.6, z - 1.6, x + 1.6, z + 1.6], (gx, gz) => Math.hypot(gx - x, gz - z) < r + 0.25);
   forCells(x - 2, z - 2, x + 2, z + 2, (cx, cz, k) => paintMax(e, 'P', k, 0.4 * smooth(r + 0.9, r, Math.hypot(cx - x, cz - z))));
@@ -1327,6 +1460,16 @@ function addTowerAlt(e, x, z, delay, roofHex) {
     rb.add(CYL_LO, '#b8c0c8', M(0, Ht + r * 0.9 + 0.7, 0, 0, 0, 0, 0.03, 1.4, 0.03));
     const bl = new Builder().add(ICO, neon('#ff4a3a', 3), M(0, Ht + r * 0.9 + 1.42, 0, 0, 0, 0, 0.08, 0.08, 0.08)).mesh(neonMat, false);
     bl.userData.ph = rand(0, 1); roof.add(bl); (e.blink || (e.blink = [])).push(bl);
+  } else if (st === 'villa') {
+    // 别墅风的观景塔：白色方柱，顶上一圈玻璃观景室和出挑的平屋顶
+    const Ht = rand(3.6, 4.4);
+    b.add(BOX, jc('#d8d4cc'), M(0, (bury + 0.25) / 2, 0, 0, 0, 0, 2.0, bury + 0.25, 2.0));
+    b.add(BOX, jc(pick(PLASTER), 0.005), M(0, bury + 0.25 + (Ht - 1.45) / 2, 0, 0, 0, 0, 1.4, Ht - 1.45, 1.4));
+    b.add(BOX, jc(CAP, 0.02), M(0.55, bury + (Ht - 1.0) / 2, 0.55, 0, 0, 0, 0.45, Ht - 1.0, 0.45));
+    b.add(BOX, '#f0eee8', M(0, bury + Ht - 1.25, 0, 0, 0, 0, 1.9, 0.1, 1.9));
+    for (let q = 0; q < 4; q++) { const a = q * Math.PI / 2; wb.add(BOX, '#ffffff', M(Math.cos(a) * 0.9, bury + Ht - 0.65, -Math.sin(a) * 0.9, a, 0, 0, 0.04, 1.05, 1.75)); }
+    for (const [px, pz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) b.add(BOX, '#2e3034', M(px * 0.9, bury + Ht - 0.65, pz * 0.9, 0, 0, 0, 0.06, 1.15, 0.06));
+    rb.add(BOX, jc(roofHex), M(0, Ht + 0.07, 0, 0, 0, 0, 2.7, 0.14, 2.7));
   } else {
     // 五重塔：深色木构 + 白壁，层层出挑的瓦檐，顶上相轮
     const tiers = 4 + (Math.random() < 0.5 ? 1 : 0), w0 = r * 1.7;
@@ -1357,7 +1500,7 @@ function addTowerAlt(e, x, z, delay, roofHex) {
   if (rgb.parts.length) roof.add(rgb.mesh(neonMat, false));
   e.group.add(roof);
   drop(roof, delay + 0.45, 0.75, 3.5, 'roof');
-  tween(0.01, delay + 0.75, () => {}, () => dust(x, z, 8, 1.6));
+  if (!quietBuild) tween(0.01, delay + 0.75, () => {}, () => dust(x, z, 8, 1.6));
   (e.towers || (e.towers = [])).push({ x, z });
   hideGrass(e, [x - 1.8, z - 1.8, x + 1.8, z + 1.8], (gx, gz) => Math.hypot(gx - x, gz - z) < r + 0.3);
   forCells(x - 2, z - 2, x + 2, z + 2, (cx, cz, k) => paintMax(e, 'P', k, 0.4 * smooth(r + 0.9, r, Math.hypot(cx - x, cz - z))));
@@ -1373,15 +1516,157 @@ function buildLoneTower(p, delay = 0) {
   return e;
 }
 
-function buildWall(raw, delay = 0, roofHex = S.roof) {
+// ================= 城墙门洞 =================
+// 两条线段的交点（没有交点返回 null）
+function segX(a, b, c, d) {
+  const r1x = b.x - a.x, r1z = b.z - a.z, r2x = d.x - c.x, r2z = d.z - c.z, den = r1x * r2z - r1z * r2x;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((c.x - a.x) * r2z - (c.z - a.z) * r2x) / den, u = ((c.x - a.x) * r1z - (c.z - a.z) * r1x) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { x: a.x + r1x * t, z: a.z + r1z * t } : null;
+}
+function polyCrossings(A, B) {
+  const out = [];
+  for (let i = 0; i < A.length - 1; i++) for (let j = 0; j < B.length - 1; j++) {
+    const q = segX(A[i], A[i + 1], B[j], B[j + 1]);
+    if (q && !out.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 3)) out.push(q);
+  }
+  return out;
+}
+function inPoly(x, z, P) {
+  let c = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i].z > z) !== (P[j].z > z) && x < (P[j].x - P[i].x) * (z - P[i].z) / (P[j].z - P[i].z) + P[i].x) c = !c;
+  return c;
+}
+// 自动门洞：先找穿过城墙的小路；闭合的院墙如果没有小路穿过，就朝村子中心开一道（院子把中心围住时朝正面），两边立塔楼
+function autoGates(src, closed) {
+  const ring = closed ? [...src, src[0]] : src, out = [];
+  for (const p of entities) if (p.type === 'path' && !p.dead && p.raw) for (const q of polyCrossings(ring, p.raw)) out.push({ x: q.x, z: q.z, t: false });
+  if (closed && !out.length) {
+    const inside = inPoly(0, 0, src);
+    let best = src[0], bv = -Infinity;
+    for (const q of src) { const v = inside ? q.z : -Math.hypot(q.x, q.z); if (v > bv) { bv = v; best = q; } }
+    out.push({ x: best.x, z: best.z, t: true });
+  }
+  return out;
+}
+// 别墅绿篱外层的叶子：沿着这段墙上中下三排叶团，叶片和树冠用同一种叶片卡，会随风抖动
+const HEDGE_PAL = ['#3f6f32', '#4a7a38', '#36602c', '#55843e'];
+function hedgeCrown(len) {
+  const cb = new Crown('round', 0.34), bury = 0.8;
+  for (let x = -len / 2; x <= len / 2 + 0.01; x += 0.42) for (const y of [0.45, 1.05, 1.62]) cb.cluster(x + rand(-0.08, 0.08), bury + y, rand(-0.06, 0.06), rand(0.42, 0.5), y > 1.5 ? 0.75 : 1, Math.random(), 95);
+  const m = cb.mesh(); recolorCrown(m, HEDGE_PAL);
+  return m;
+}
+// 门楼：沿墙方向宽 span，中间开一个门洞。田园 / 魔法是石拱门（两扇木门向里敞开），未来是金属门框 + 灯带，和风是木门楼 + 瓦顶
+function gateArch(b, gb, span, T, ds = 1) {
+  const bury = 0.8, ow = Math.max(1.2, span - 0.8), r = ow / 2;
+  if (ST.build === 'villa') {
+    // 别墅：绿篱中间两根白色门柱（柱头一盏灯），一对深色钢框的木格栅门向院子里敞开，地上一条石材门槛
+    const top = bury + 2.15, pw = span / 2 - r;
+    for (const sd of [-1, 1]) {
+      b.add(BOX, jc(pick(PLASTER), 0.005), M(sd * (r + pw / 2), top / 2, 0, 0, 0, 0, pw, top, T + 0.1));
+      b.add(BOX, jc(CAP), M(sd * (r + pw / 2), top + 0.05, 0, 0, 0, 0, pw + 0.08, 0.1, T + 0.18));
+      if (gb) gb.add(BOX, neon('#ffd8a0', 1.8), M(sd * (r + pw / 2), top - 0.35, -ds * ((T + 0.1) / 2 + 0.02), 0, 0, 0, 0.14, 0.1, 0.03));
+      const lz = r * 0.92, zc = -ds * (T / 2 + lz / 2), x = sd * (r - 0.06);
+      b.add(BOX, '#2e3034', M(x, bury + 0.95, zc, 0, 0, 0, 0.06, 1.7, lz));
+      for (let k = 0; k < 6; k++) b.add(BOX, jc('#9a6a42', 0.03), M(x + sd * 0.01, bury + 0.95, -ds * (T / 2 + (k + 0.5) / 6 * lz), 0, 0, 0, 0.06, 1.55, lz / 6 * 0.7));
+    }
+    b.add(BOX, jc('#d8d4cc'), M(0, bury + 0.02, 0, 0, 0, 0, ow, 0.05, T + 0.3));
+    return;
+  }
+  if (ST.build === 'scifi') {
+    const y1 = bury + 0.2, top = y1 + 2.0, oh = bury + 2.0;
+    for (const sd of [-1, 1]) b.add(BOX, jc('#e9edf0', 0.01), M(sd * (r + (span / 2 - r) / 2), top / 2, 0, 0, 0, 0, span / 2 - r, top, T));
+    b.add(BOX, jc('#e9edf0', 0.01), M(0, (oh + top) / 2, 0, 0, 0, 0, ow, top - oh, T));
+    b.add(BOX, jc('#d3dae0'), M(0, top + 0.06, 0, 0, 0, 0, span + 0.04, 0.12, T + 0.1));
+    b.add(BOX, '#8a939c', M(0, bury + 0.03, 0, 0, 0, 0, ow, 0.06, T + 0.2));
+    if (gb) for (const sd of [1, -1]) {
+      gb.add(BOX, neon(ST.accent, 2.4), M(0, oh - 0.03, sd * (T / 2 + 0.02), 0, 0, 0, ow, 0.05, 0.02));
+      for (const sx of [-1, 1]) gb.add(BOX, neon(ST.accent, 2.4), M(sx * (r - 0.03), (bury + oh) / 2, sd * (T / 2 + 0.02), 0, 0, 0, 0.05, oh - bury, 0.02));
+    }
+    return;
+  }
+  if (ST.build === 'oriental') {
+    const top = bury + 0.2 + 2.0, beam = bury + 1.95, wood = '#3a2a20', tile = new THREE.Color(ST.wallTile);
+    for (const sd of [-1, 1]) {
+      b.add(BOX, jc(wood), M(sd * (r + 0.1), top / 2 + 0.1, 0, 0, 0, 0, 0.22, top + 0.2, 0.26));
+      const pw = span / 2 - r - 0.2;
+      if (pw > 0.05) b.add(BOX, jc(pick(PLASTER), 0.01), M(sd * (r + 0.2 + pw / 2), top / 2, 0, 0, 0, 0, pw, top, T - 0.12));
+    }
+    b.add(BOX, jc(wood), M(0, beam, 0, 0, 0, 0, ow + 0.5, 0.16, 0.3));
+    b.add(BOX, jc(pick(PLASTER), 0.01), M(0, (beam + top) / 2 + 0.05, 0, 0, 0, 0, ow, top - beam, T - 0.2));
+    b.add(BOX, jc(wood), M(0, top + 0.02, 0, 0, 0, 0, span + 0.2, 0.12, T));
+    const half = T / 2 + 0.4, rh = 0.4, sl = Math.hypot(half, rh), ang = Math.atan2(rh, half);
+    for (const sd of [1, -1]) b.add(BOX, jc(tile, 0.02), M(0, top + rh / 2 + 0.04, sd * half / 2, 0, sd * ang, 0, span + 0.5, 0.07, sl));
+    b.add(CYL, tile.clone().offsetHSL(0, 0, -0.05), M(0, top + rh + 0.04, 0, 0, 0, Math.PI / 2, 0.07, span + 0.55, 0.07));
+    return;
+  }
+  // 石拱门：一排排石块绕开拱洞砌上去，拱圈用浅色楔石，顶上照样有压顶和垛口
+  const rowH = 0.36, top = bury + 0.3 + Math.round(2.0 / rowH) * rowH, ys = bury + 0.95, ro = r + 0.2;
+  for (let y = rowH / 2; y < top; y += rowH) {
+    const hw = y < ys ? r : (y - ys < ro ? Math.sqrt(ro * ro - (y - ys) * (y - ys)) : 0);
+    for (const sd of [-1, 1]) {
+      let x = hw;
+      while (x < span / 2 - 0.02) {
+        const end = Math.min(x + rand(0.36, 0.62), span / 2 + 0.02), sl = end - x - 0.035;
+        if (sl > 0.06) b.add(BOX, jc(y < bury ? STONE_DARK : pick(STONE), 0.03), M(sd * (x + end) / 2, y, rand(-0.012, 0.012), 0, 0, 0, sl, rowH - 0.035, T + rand(-0.02, 0.05)));
+        x = end;
+      }
+    }
+  }
+  const n = 9;
+  for (let k = 0; k < n; k++) {
+    const a = Math.PI * (k + 0.5) / n, kk = k === (n - 1) / 2;
+    b.add(BOX, jc(CAP, 0.03), M(Math.cos(a) * (r + 0.1), ys + Math.sin(a) * (r + 0.1), 0, 0, 0, a + Math.PI / 2, Math.PI * r / n * 0.9 * (kk ? 1.3 : 1), kk ? 0.32 : 0.24, T + 0.08));
+  }
+  b.add(BOX, jc(CAP), M(0, top + 0.06, 0, 0, 0, 0, span + 0.04, 0.12, T + 0.12));
+  for (const sx of [-1, 1]) for (const sd of [1, -1]) {
+    if (ST.build === 'magic') b.add(CONE4, jc(pick(STONE)), M(sx * span * 0.3, top + 0.36, sd * (T / 2 - 0.1), Math.PI / 4, 0, 0, 0.2, 0.5, 0.2));
+    else b.add(BOX, jc(pick(STONE)), M(sx * span * 0.3, top + 0.29, sd * (T / 2 - 0.08), 0, 0, 0, 0.42, 0.34, 0.24));
+  }
+  b.add(BOX, jc(STONE_DARK), M(0, bury + 0.02, 0, 0, 0, 0, ow + 0.1, 0.06, T + 0.1));
+  // 两扇木门向院子里敞开，贴着门洞两侧
+  const dh = ys - bury + r * 0.85;
+  for (const sd of [-1, 1]) {
+    b.add(BOX, jc('#7a5236', 0.03), M(sd * (r - 0.06), bury + dh / 2, -ds * (T / 2 + r * 0.45), 0, 0, 0, 0.07, dh, r * 0.9));
+    for (const hy of [0.3, dh - 0.35]) b.add(BOX, '#3d3a44', M(sd * (r - 0.1), bury + hy, -ds * (T / 2 + r * 0.45), 0, 0, 0, 0.02, 0.07, r * 0.86));
+  }
+}
+function buildWall(raw, delay = 0, roofHex = S.roof, gates) {
   let src = raw.map(p => ({ x: p.x, z: p.z }));
   const closed = src.length > 4 && polyLen(src) > 8 && Math.hypot(src[0].x - src[src.length - 1].x, src[0].z - src[src.length - 1].z) < 2;
+  const gl = gates ? gates.map(q => ({ ...q })) : autoGates(src, closed);
+  // 闭合的院墙：把首尾接缝转到离门洞最远的地方，门洞就不会跨在接缝上
+  if (closed && gl.length) {
+    let bj = 0, bv = -1;
+    src.forEach((q, j) => { const v = Math.min(...gl.map(g => Math.hypot(g.x - q.x, g.z - q.z))); if (v > bv) { bv = v; bj = j; } });
+    src = src.slice(bj).concat(src.slice(0, bj));
+  }
   if (closed) src.push({ x: src[0].x, z: src[0].z });
   const pts = resample(chaikin(chaikin(src)), 0.72);
   if (pts.length < 2) return null;
-  const e = makeEntity('wall', { block: true }); e.raw = raw.map(q => ({ x: q.x, z: q.z })); e.roofHex = roofHex;
+  const e = makeEntity('wall', { block: true }); e.raw = raw.map(q => ({ x: q.x, z: q.z })); e.roofHex = roofHex; e.pts = pts;
   const Hh = 2.0, T = 0.78;
+  const cumL = arcLens(pts), total = cumL[cumL.length - 1];
+  const ptAt = d => {
+    let i = 0; while (i < cumL.length - 2 && cumL[i + 1] < d) i++;
+    const a = pts[i], b = pts[i + 1], l = Math.max(1e-6, cumL[i + 1] - cumL[i]), t = clamp((d - cumL[i]) / l, 0, 1);
+    return { x: lerp(a.x, b.x, t), z: lerp(a.z, b.z, t), tx: (b.x - a.x) / l, tz: (b.z - a.z) / l };
+  };
+  // 门洞落在墙线上的位置（弧长），太靠两端的不开
+  const G = [];
+  for (const g of gl) {
+    let bd = Infinity, bs = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1], vx = b.x - a.x, vz = b.z - a.z, ll = vx * vx + vz * vz;
+      const t = ll > 0 ? clamp(((g.x - a.x) * vx + (g.z - a.z) * vz) / ll, 0, 1) : 0, dd = Math.hypot(a.x + vx * t - g.x, a.z + vz * t - g.z);
+      if (dd < bd) { bd = dd; bs = cumL[i] + t * Math.sqrt(ll); }
+    }
+    if (bd < 3 && bs > 1.6 && bs < total - 1.6 && !G.some(o => Math.abs(o.d - bs) < 3.2)) G.push({ d: bs, t: !!g.t });
+  }
+  const segIn = i => G.some(g => Math.abs((cumL[i] + cumL[i + 1]) / 2 - g.d) < 1.3);
   for (let i = 0; i < pts.length - 1; i++) {
+    if (segIn(i)) continue;
     const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
     const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
     const y0 = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z), heightAt(mx, mz));
@@ -1389,11 +1674,13 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
     wallSegment(bl, len + 0.08, Hh, T, i % 2 === 0, Math.random() < 0.22, gl);
     const m = bl.mesh();
     if (gl.parts.length) m.add(gl.mesh(neonMat, false));
+    if (ST.build === 'villa') m.add(hedgeCrown(len + 0.08));
     m.position.set(mx, y0 - 0.8, mz); m.rotation.y = yaw(dx, dz);
     e.group.add(m);
     rise(m, delay + i * 0.035, 0.5, 'stone');
   }
   for (let i = 1; i < pts.length - 1; i++) {
+    if ((segIn(i - 1) && segIn(i)) || ST.build === 'villa') continue;
     const a = pts[i - 1], c = pts[i + 1], p = pts[i];
     const bl = new Builder();
     wallSegment(bl, T * 0.9, Hh, T - 0.05, false, false);
@@ -1402,9 +1689,26 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
     e.group.add(m);
     rise(m, delay + i * 0.035, 0.5);
   }
-  // 塔楼：两端 + 每隔约 10 米一座；闭合院墙均匀分布
-  const total = polyLen(pts), cum = [0];
-  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+  // 门楼：横跨被跳过的那几段墙
+  e.gates = [];
+  for (const g of G) {
+    const skipped = []; for (let i = 0; i < pts.length - 1; i++) if (Math.abs((cumL[i] + cumL[i + 1]) / 2 - g.d) < 1.3) skipped.push(i);
+    const g0 = cumL[skipped[0]], g1 = cumL[skipped[skipped.length - 1] + 1], c = ptAt((g0 + g1) / 2), span = g1 - g0 + 0.08;
+    let y0 = Infinity; for (let k = -2; k <= 2; k++) { const q = ptAt(lerp(g0, g1, (k + 2) / 4)); y0 = Math.min(y0, heightAt(q.x, q.z)); }
+    // 门扇朝院子里开：闭合院墙朝院子中心那一侧，不闭合的朝岛中心那一侧
+    let ccx = 0, ccz = 0; if (closed) { for (const q of pts) { ccx += q.x; ccz += q.z; } ccx /= pts.length; ccz /= pts.length; }
+    const ds = (c.tz * (ccx - c.x) - c.tx * (ccz - c.z)) >= 0 ? 1 : -1;
+    const bl = new Builder(), gl2 = new Builder();
+    gateArch(bl, gl2, span, T, ds);
+    const m = bl.mesh();
+    if (gl2.parts.length) m.add(gl2.mesh(neonMat, false));
+    m.position.set(c.x, y0 - 0.8, c.z); m.rotation.y = yaw(c.tx, c.tz);
+    e.group.add(m);
+    rise(m, delay + skipped[0] * 0.035, 0.5, 'stone');
+    e.gates.push({ x: c.x, z: c.z, t: g.t, g0, g1 });
+  }
+  // 塔楼：两端 + 每隔约 10 米一座；闭合院墙均匀分布。离门洞太近的不要；自动开的院门两侧各立一座
+  const cum = cumL;
   const at = d => { let i = 0; while (i < cum.length - 1 && cum[i + 1] < d) i++; return i; };
   const idxs = new Set();
   if (closed) { const n = Math.max(3, Math.round(total / 9)); for (let k = 0; k < n; k++) idxs.add(at(total * k / n)); }
@@ -1412,7 +1716,10 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
     idxs.add(0); idxs.add(pts.length - 1);
     const n = Math.floor(total / 10); for (let k = 1; k <= n; k++) if (total * k / (n + 1) > 3) idxs.add(at(total * k / (n + 1)));
   }
-  if (ST.wallTowers !== false) for (const i of idxs) addTower(e, pts[i].x, pts[i].z, delay + i * 0.035 + 0.15, roofHex);
+  if (ST.wallTowers !== false) {
+    for (const i of idxs) if (!e.gates.some(g => cum[i] > g.g0 - (g.t ? 3.2 : 1.4) && cum[i] < g.g1 + (g.t ? 3.2 : 1.4))) addTower(e, pts[i].x, pts[i].z, delay + i * 0.035 + 0.15, roofHex);
+    for (const g of e.gates) if (g.t) for (const d of [g.g0 - 1.0, g.g1 + 1.0]) { const q = ptAt(clamp(d, 0, total)); addTower(e, q.x, q.z, delay + 0.2, roofHex); }
+  }
   e.dist = (x, z) => Math.min(distPoly(x, z, pts) - 0.45, towerDist(e, x, z));
   clearNature(e);
   hideGrass(e, bbox(pts, 1.5), (x, z) => distPoly(x, z, pts) < T / 2 + 0.25);
@@ -1425,6 +1732,12 @@ function buildWall(raw, delay = 0, roofHex = S.roof) {
 // 未来风：白色面板墙 + 霓虹灯带；和风：土塀（土黄色泥墙 + 瓦檐）
 function wallSegmentAlt(b, len, Hh, T, merlon, vines, gb) {
   const bury = 0.8;
+  if (ST.build === 'villa') {
+    // 别墅：两米多高的绿篱当围墙。这里只砌中间一道深绿色的"芯"挡住视线，外面茂密的叶子由 hedgeCrown 另外长出来
+    const top = bury + 1.6;
+    b.add(BOX, jc('#2f5428', 0.03), M(0, top / 2, 0, 0, 0, 0, len + 0.05, top, T - 0.4));
+    return bury + 2.0;
+  }
   if (ST.build === 'scifi') {
     const y1 = bury + 0.2;
     b.add(BOX, jc('#8a939c'), M(0, y1 / 2, 0, 0, 0, 0, len + 0.04, y1, T + 0.16));
@@ -1448,16 +1761,29 @@ function wallSegmentAlt(b, len, Hh, T, merlon, vines, gb) {
 }
 
 // ================= 建造：房屋 =================
-function buildHouse(a, b, delay = 0, roofHex = S.roof) {
-  if (ST.build === 'scifi' || ST.build === 'oriental') return buildHouseAlt(a, b, delay, roofHex);
+// 房屋参数（spec）：屋脊两端 a/b、宽 W、墙高 H、出檐 eave、墙色、屋顶色、门窗 open。
+// 门窗没改过时（custom=false）每次按尺寸重新排；改过以后就照 open 列表摆
+function houseSpec(a, b, spec, defH, defEave) {
   let dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
   if (len < 0.5) {
     const v = new THREE.Vector3(); camera.getWorldDirection(v);
     dx = -v.z; dz = v.x; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l; len = 3.4;
     a = { x: a.x - dx * len / 2, z: a.z - dz * len / 2 };
   } else { dx /= len; dz /= len; }
-  const Lh = clamp(len, 2.4, 9), W = clamp(2.3 + Lh * 0.18, 2.5, 3.8);
-  const storeys = Lh >= 5 ? 2 : 1, sh = 1.7, h = storeys * sh, rh = W * ST.pitch, top = 0.45 + h, half = W / 2;
+  const P = spec ? JSON.parse(JSON.stringify(spec)) : {}, Lh = clamp(len, 2.4, 12);
+  P.a = { x: a.x, z: a.z }; P.b = { x: a.x + dx * Lh, z: a.z + dz * Lh };
+  P.W = clamp(P.W ?? clamp(2.3 + Lh * 0.18, 2.5, 3.8), 2, 6.5);
+  P.H = clamp(P.H ?? defH(Lh), 1.3, 5.2);
+  P.eave = clamp(P.eave ?? defEave, 0.05, 1.5);
+  P.open = P.open || []; P.custom = !!P.custom; P.chs = P.chs ?? (Math.random() < 0.5 ? 1 : -1);
+  return { P, dx, dz, Lh };
+}
+function buildHouse(a, b, delay = 0, roofHex = S.roof, spec = null) {
+  if (ST.build === 'villa') return buildVilla(a, b, delay, roofHex, spec);
+  if (ST.build === 'scifi' || ST.build === 'oriental') return buildHouseAlt(a, b, delay, roofHex, spec);
+  const hs = houseSpec(a, b, spec, L => (L >= 5 ? 2 : 1) * 1.7, 0.34), P = hs.P, dx = hs.dx, dz = hs.dz, Lh = hs.Lh;
+  a = P.a; roofHex = P.roofHex || roofHex; P.roofHex = roofHex;
+  const W = P.W, h = P.H, storeys = clamp(Math.round(h / 1.7), 1, 3), sh = h / storeys, rh = W * ST.pitch, top = 0.45 + h, half = W / 2;
   const cx = a.x + dx * Lh / 2, cz = a.z + dz * Lh / 2, th = yaw(dx, dz), ct = Math.cos(th), st = Math.sin(th);
   const toWorld = (lx, lz) => ({ x: cx + lx * ct + lz * st, z: cz - lx * st + lz * ct });
   let y0 = heightAt(cx, cz);
@@ -1472,11 +1798,13 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   e.dist = sdf;
   clearNature(e);
   const root = new THREE.Group(); root.position.set(cx, y0, cz); root.rotation.y = th;
-  if (ST.lean) root.rotation.z = rand(-1, 1) * ST.lean;
+  if (ST.lean) root.rotation.z = (P.lean ?? (P.lean = rand(-1, 1))) * ST.lean;
   e.group.add(root);
+  e.root = root; e.y0 = y0; e.spec = P; e.pitchK = ST.pitch; e.storeys = storeys; e.sh = sh; e.doorY = 0.45;
 
   const bd = new Builder(), wb = new Builder();
-  const plaster = jc(pick(PLASTER), 0.015), shutter = new THREE.Color(roofHex).offsetHSL(0, -0.05, 0.08);
+  const plaster = P.wallCol ? new THREE.Color(P.wallCol) : jc(pick(PLASTER), 0.015), shutter = new THREE.Color(roofHex).offsetHSL(0, -0.05, 0.08);
+  P.wallCol = '#' + plaster.getHexString();
   bd.add(BOX, jc(STONE_DARK), M(0, -0.275, 0, 0, 0, 0, Lh + 0.16, 1.45, W + 0.16));
   for (let i = 0; i < 14; i++) {
     const side = pick(['+z', '-z', '+x', '-x']), u = rand(-0.45, 0.45);
@@ -1493,12 +1821,12 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   for (const sx of [1, -1]) for (const sz of [1, -1]) bd.add(BOX, jc(beam, 0.02), M(sx * Lh / 2, 0.45 + h / 2, sz * half, 0, 0, 0, 0.16, h, 0.16));
   for (const sz of [1, -1]) {
     bd.add(BOX, jc(beam, 0.02), M(0, top - 0.07, sz * half, 0, 0, 0, Lh + 0.1, 0.14, 0.1));
-    if (storeys === 2) bd.add(BOX, jc(beam, 0.02), M(0, 0.45 + sh, sz * half, 0, 0, 0, Lh + 0.1, 0.14, 0.1));
+    for (let s = 1; s < storeys; s++) bd.add(BOX, jc(beam, 0.02), M(0, 0.45 + s * sh, sz * half, 0, 0, 0, Lh + 0.1, 0.14, 0.1));
   }
   for (const sx of [1, -1]) bd.add(BOX, jc(beam, 0.02), M(sx * Lh / 2, top - 0.07, 0, 0, 0, 0, 0.1, 0.14, W + 0.1));
-  if (storeys === 2) {
+  for (let s = 1; s < storeys; s++) {
     for (const sz of [1, -1]) for (let u = -Lh / 2 + 0.7; u < Lh / 2 - 0.5; u += 1.25) {
-      bd.add(BOX, jc(beam, 0.02), M(u + 0.62, 0.45 + sh * 1.5, sz * (half + 0.01), 0, 0, Math.atan2(sh - 0.2, 0.9) * (sz > 0 ? 1 : -1), 0.08, Math.hypot(sh - 0.2, 0.9) * 0.55, 0.05));
+      bd.add(BOX, jc(beam, 0.02), M(u + 0.62, 0.45 + sh * (s + 0.5), sz * (half + 0.01), 0, 0, Math.atan2(sh - 0.2, 0.9) * (sz > 0 ? 1 : -1), 0.08, Math.hypot(sh - 0.2, 0.9) * 0.55, 0.05));
     }
   }
 
@@ -1510,7 +1838,7 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
     else { x = -(Lh / 2 + n); z = u; sx = dn; sz = du; }
     bl.add(geo, color, M(x, v, z, 0, 0, 0, sx, dv, sz));
   };
-  const addWindow = (f, u, v, k = 1) => {
+  const addWindow = (f, u, v, k = 1, box = Math.random() < 0.65) => {
     wpart(bd, f, u, v, 0.02, 0.62 * k, 0.78 * k, 0.08, FRAME);
     wpart(wb, f, u, v, 0.05, 0.46 * k, 0.62 * k, 0.04, '#ffffff');
     wpart(bd, f, u, v, 0.075, 0.045, 0.62 * k, 0.02, FRAME);
@@ -1520,30 +1848,27 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
       wpart(bd, f, u + 0.44 * k, v, 0.04, 0.24 * k, 0.74 * k, 0.04, shutter);
     }
     wpart(bd, f, u, v - 0.42 * k, 0.08, 0.7 * k, 0.06, 0.16, FRAME);
-    if (k >= 0.9 && Math.random() < 0.65) {
+    if (k >= 0.9 && box) {
       wpart(bd, f, u, v - 0.53 * k, 0.12, 0.56, 0.14, 0.16, WOOD);
       const fc = pick(FLOWER_ALL);
       for (let i = 0; i < 5; i++) wpart(bd, f, u - 0.22 + i * 0.11, v - 0.43, 0.13 + rand(-0.02, 0.02), 0.07, 0.07, 0.07, i % 2 ? '#6f9a45' : jc(fc), ICO);
     }
   };
-  const nwin = Math.max(1, Math.floor((Lh - 0.5) / 1.25)), sp = Lh / nwin;
-  for (let s = 0; s < storeys; s++) {
-    const v = 0.45 + s * sh + (s === 0 ? 0.95 : 0.9);
-    for (let i = 0; i < nwin; i++) {
-      const u = -Lh / 2 + sp * (i + 0.5);
-      if (!(s === 0 && Math.abs(u) < 0.75)) addWindow('+z', u, v);
-      addWindow('-z', u, v);
-    }
-    if (W > 2.6 || s === 0) { addWindow('+x', 0, v, 0.85); addWindow('-x', 0, v, 0.85); }
+  if (!P.custom) P.open = defaultOpenings(Lh, W, storeys);
+  else P.open = P.open.filter(o => Math.abs(o.u) <= (o.f[1] === 'z' ? Lh : W) / 2 - 0.35 && (o.k === 'door' || o.s < storeys));
+  const gbh = new Builder();
+  for (const o of P.open) {
+    if (o.k === 'door') {
+      const f = o.f, u = o.u;
+      wpart(bd, f, u, 0.45 + 0.66, 0.02, 0.94, 1.36, 0.06, jc('#d7cdb9'));
+      wpart(bd, f, u, 0.45 + 0.6, 0.05, 0.72, 1.2, 0.06, jc('#7a5236'));
+      wpart(bd, f, u + 0.24, 0.45 + 0.6, 0.1, 0.06, 0.06, 0.06, '#e1bd62', ICO);
+      wpart(bd, f, u, 0.36, 0.25, 1.05, 0.18, 0.5, jc(STONE_DARK));
+      wpart(bd, f, u, 0.45 + 1.42, 0.24, 1.15, 0.07, 0.5, new THREE.Color(roofHex).offsetHSL(0, 0, -0.05));
+      if (ST.build === 'magic') for (const du of [-0.62, 0.62]) wpart(gbh, f, u + du, 0.45 + 1.25, 0.16, 0.13, 0.17, 0.13, neon(ST.windowGlow, 2.4), ICO);
+    } else addWindow(o.f, o.u, 0.45 + o.s * sh + sh * 0.55, (o.sz || 1) * Math.min(1, sh / 1.6), o.box);
   }
   addWindow('+x', 0, top + rh * 0.32, 0.6); addWindow('-x', 0, top + rh * 0.32, 0.6);
-  wpart(bd, '+z', 0, 0.45 + 0.66, 0.02, 0.94, 1.36, 0.06, jc('#d7cdb9'));
-  wpart(bd, '+z', 0, 0.45 + 0.6, 0.05, 0.72, 1.2, 0.06, jc('#7a5236'));
-  wpart(bd, '+z', 0.24, 0.45 + 0.6, 0.1, 0.06, 0.06, 0.06, '#e1bd62', ICO);
-  wpart(bd, '+z', 0, 0.36, 0.25, 1.05, 0.18, 0.5, jc(STONE_DARK));
-  wpart(bd, '+z', 0, 0.45 + 1.42, 0.24, 1.15, 0.07, 0.5, new THREE.Color(roofHex).offsetHSL(0, 0, -0.05));
-  const gbh = new Builder();
-  if (ST.build === 'magic') for (const u of [-0.62, 0.62]) wpart(gbh, '+z', u, 0.45 + 1.25, 0.16, 0.13, 0.17, 0.13, neon(ST.windowGlow, 2.4), ICO);
 
   const base = new THREE.Group();
   const bm = bd.mesh(); base.add(bm);
@@ -1553,7 +1878,7 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   rise(base, delay, 0.6, 'wood');
 
   const roof = new THREE.Group();
-  const o = 0.34, oG = 0.3, slopeLen = Math.hypot(half, rh), ang = Math.atan2(rh, half), s = slopeLen + o, rl = Lh + 2 * oG;
+  const o = P.eave, oG = 0.15 + o * 0.45, slopeLen = Math.hypot(half, rh), ang = Math.atan2(rh, half), s = slopeLen + o, rl = Lh + 2 * oG;
   for (const sd of [1, -1]) {
     const g = scaleUV(new THREE.BoxGeometry(rl, 0.12, s), rl / 1.7, s / 1.7);
     const m = new THREE.Mesh(g, roofMat(roofHex)); m.castShadow = m.receiveShadow = true; m.userData.own = true;
@@ -1564,13 +1889,13 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   }
   const rb = new Builder();
   rb.add(BOX, new THREE.Color(roofHex).offsetHSL(0, 0, -0.08), M(0, top + rh + 0.06, 0, 0, Math.PI / 4, 0, rl, 0.2, 0.2));
-  const chx = (Math.random() < 0.5 ? 1 : -1) * Lh * 0.26, chz = -W * 0.22, chTop = top + rh + 0.5;
+  const chx = P.chs * Lh * 0.26, chz = -W * 0.22, chTop = top + rh + 0.5;
   rb.add(BOX, jc('#c2b59d'), M(chx, (top + chTop) / 2, chz, 0, 0, 0, 0.48, chTop - top, 0.48));
   rb.add(BOX, jc('#9d927f'), M(chx, chTop + 0.05, chz, 0, 0, 0, 0.6, 0.1, 0.6));
   roof.add(rb.mesh());
   root.add(roof);
   drop(roof, delay + 0.45, 0.75, 4, 'roof');
-  tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
+  if (!quietBuild) tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
   const cw = toWorld(chx, chz);
   e.chimneys.push({ x: cw.x, y: y0 + chTop + 0.2, z: cw.z, t: -(delay + 1.4), col: ST.smoke });
 
@@ -1581,15 +1906,120 @@ function buildHouse(a, b, delay = 0, roofHex = S.roof) {
   return e;
 }
 
+// 默认门窗：长边每隔约 1.25 米一扇窗，正面底层正中是门，山墙每层一扇小一点的窗
+function defaultOpenings(Lh, W, storeys) {
+  const out = [], nwin = Math.max(1, Math.floor((Lh - 0.5) / 1.25)), sp = Lh / nwin;
+  const box = (f, u, s) => ((Math.sin(u * 12.9898 + s * 78.233 + f.charCodeAt(1) * 3.7) * 43758.5453) % 1 + 1) % 1 < 0.65;
+  for (let s = 0; s < storeys; s++) {
+    for (let i = 0; i < nwin; i++) {
+      const u = -Lh / 2 + sp * (i + 0.5);
+      if (!(s === 0 && Math.abs(u) < 0.75)) out.push({ f: '+z', u, s, k: 'win', box: box('+z', u, s) });
+      out.push({ f: '-z', u, s, k: 'win', box: box('-z', u, s) });
+    }
+    if (W > 2.6 || s === 0) for (const f of ['+x', '-x']) out.push({ f, u: 0, s, k: 'win', sz: 0.85, box: false });
+  }
+  out.push({ f: '+z', u: 0, s: 0, k: 'door' });
+  return out;
+}
+// 未来风 / 和风房子上另外加开的门窗：统一画成窗框 + 玻璃、木门
+function altOpenings(P, wpart, bd, wb, y1, sh, frame, Lh, storeys) {
+  P.open = P.open.filter(o => Math.abs(o.u) <= (o.f[1] === 'z' ? Lh : P.W) / 2 - 0.35 && (o.k === 'door' || o.s < storeys));
+  for (const o of P.open) {
+    if (o.k === 'door') {
+      wpart(bd, o.f, o.u, y1 + 0.62, 0.02, 0.86, 1.3, 0.06, frame);
+      wpart(bd, o.f, o.u, y1 + 0.6, 0.04, 0.7, 1.2, 0.05, jc(ST.build === 'scifi' ? '#3a4652' : '#6a4a32'));
+    } else {
+      const v = y1 + o.s * sh + sh * 0.55;
+      wpart(bd, o.f, o.u, v, 0.02, 0.66, 0.8, 0.06, frame);
+      wpart(wb, o.f, o.u, v, 0.045, 0.5, 0.64, 0.03, '#ffffff');
+    }
+  }
+}
+// 别墅：底层四面落地玻璃的通透盒子，上层白色体块错开、往前悬挑，开长条窗、贴一段木格栅；
+// 一道石材竖墙从地面穿到屋顶，没被上层盖住的底层屋顶做成玻璃栏板的露台；屋顶是出挑很深的平板（出檐 = 屋顶板伸出去多少）
+function buildVilla(a, b, delay, roofHex, spec = null) {
+  const hs = houseSpec(a, b, spec, L => L >= 4.5 ? 3.4 : 1.8, 0.5), P = hs.P, dx = hs.dx, dz = hs.dz, Lh = hs.Lh;
+  a = P.a; roofHex = P.roofHex || roofHex; P.roofHex = roofHex; P.custom = true; P.vs = P.vs ?? (Math.random() < 0.5 ? 1 : -1);
+  const W = P.W, half = W / 2, vs = P.vs;
+  const cx = a.x + dx * Lh / 2, cz = a.z + dz * Lh / 2, th = yaw(dx, dz), ct = Math.cos(th), st = Math.sin(th);
+  const toWorld = (lx, lz) => ({ x: cx + lx * ct + lz * st, z: cz - lx * st + lz * ct });
+  let y0 = heightAt(cx, cz);
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { const q = toWorld(sx * Lh / 2, sz * half); y0 = Math.min(y0, heightAt(q.x, q.z)); }
+  const e = makeEntity('house', { block: true });
+  const sdf = (x, z) => {
+    const ox = x - cx, oz = z - cz, lu = ox * ct - oz * st, lv = ox * st + oz * ct;
+    const qx = Math.abs(lu) - Lh / 2, qz = Math.abs(lv) - half - 0.2;
+    return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
+  };
+  e.dist = sdf; clearNature(e);
+  const root = new THREE.Group(); root.position.set(cx, y0, cz); root.rotation.y = th; e.group.add(root);
+  const y1 = 0.25, n = Math.max(1, Math.round(P.H / 1.65)), sh = P.H / n;
+  e.root = root; e.y0 = y0; e.spec = P; e.pitchK = 0.05; e.storeys = n; e.sh = sh; e.doorY = y1;
+  const bd = new Builder(), wb = new Builder(), gl = new Builder(), rbd = new Builder(), roof = new THREE.Group();
+  const white = P.wallCol ? new THREE.Color(P.wallCol) : jc(pick(PLASTER), 0.005); P.wallCol = '#' + white.getHexString();
+  const dark = '#2e3034', stone = '#cbbfa8', wood = '#9a6a42';
+  bd.add(BOX, jc('#d8d4cc'), M(0, y1 - 0.6, 0, 0, 0, 0, Lh + 0.8, 1.2, W + 0.8));
+  const ux = Lh * 0.72, uo = vs * Lh * 0.14;   // 上层的长度和沿长边的偏移
+  for (let s = 0; s < n; s++) {
+    const yb = y1 + s * sh, glassy = s % 2 === 0, lx = s === 0 ? Lh : ux, ox = s === 0 ? 0 : uo, oz = s % 2 ? 0.3 : 0, lz = s % 2 ? W * 0.94 : W;
+    if (glassy) {
+      // 落地玻璃：四面整块玻璃，细黑框分格；屋里一面石墙、一张沙发的剪影
+      for (const sd of [1, -1]) {
+        wb.add(BOX, '#ffffff', M(ox, yb + sh / 2, oz + sd * lz / 2, 0, 0, 0, lx - 0.1, sh - 0.1, 0.04));
+        wb.add(BOX, '#ffffff', M(ox + sd * lx / 2, yb + sh / 2, oz, 0, 0, 0, 0.04, sh - 0.1, lz - 0.1));
+        const nm = Math.max(2, Math.round(lx / 1.1)), nz = Math.max(1, Math.round(lz / 1.1));
+        for (let i = 0; i <= nm; i++) bd.add(BOX, dark, M(ox - lx / 2 + i * lx / nm, yb + sh / 2, oz + sd * (lz / 2 + 0.01), 0, 0, 0, 0.05, sh, 0.05));
+        for (let i = 0; i <= nz; i++) bd.add(BOX, dark, M(ox + sd * (lx / 2 + 0.01), yb + sh / 2, oz - lz / 2 + i * lz / nz, 0, 0, 0, 0.05, sh, 0.05));
+      }
+      bd.add(BOX, jc('#e8e4dc'), M(ox, yb + 0.02, oz, 0, 0, 0, lx - 0.1, 0.04, lz - 0.1));
+      bd.add(BOX, jc(stone, 0.02), M(ox - vs * (lx / 2 - 0.3), yb + sh / 2, oz, 0, 0, 0, 0.3, sh, lz - 0.4));
+      bd.add(BOX, jc('#6a6258', 0.03), M(ox + lx * 0.1, yb + 0.25, oz - lz * 0.18, 0, 0, 0, lx * 0.3, 0.4, 0.7));
+    } else {
+      bd.add(BOX, white, M(ox, yb + sh / 2, oz, 0, 0, 0, lx, sh, lz));
+      for (const sd of [1, -1]) {
+        wb.add(BOX, '#ffffff', M(ox + lx * 0.08, yb + sh * 0.55, oz + sd * (lz / 2 + 0.01), 0, 0, 0, lx * 0.7, sh * 0.42, 0.04));
+        bd.add(BOX, dark, M(ox + lx * 0.08, yb + sh * 0.55 - sh * 0.21 - 0.02, oz + sd * (lz / 2 + 0.03), 0, 0, 0, lx * 0.7 + 0.06, 0.04, 0.06));
+      }
+      wb.add(BOX, '#ffffff', M(ox + vs * (lx / 2 + 0.01), yb + sh * 0.5, oz, 0, 0, 0, 0.04, sh * 0.7, lz * 0.3));
+      for (let i = 0; i < 9; i++) bd.add(BOX, jc(wood, 0.03), M(ox - lx / 2 + 0.25 + i * 0.13, yb + sh / 2, oz + lz / 2 + 0.04, 0, 0, 0, 0.06, sh - 0.1, 0.06));
+    }
+    // 楼板 / 屋顶板：屋顶那块按"出檐"伸出去
+    const topS = s === n - 1, ov = topS ? P.eave : 0.12;
+    (topS ? rbd : bd).add(BOX, topS ? jc(roofHex) : jc('#f0eee8'), M(ox, yb + sh + 0.07, oz, 0, 0, 0, lx + 2 * ov, 0.14, lz + 2 * ov));
+  }
+  // 石材竖墙
+  bd.add(BOX, jc(stone, 0.02), M(vs * (Lh / 2 - 0.25), y1 + (P.H + 0.3) / 2, -half * 0.3, 0, 0, 0, 0.5, P.H + 0.3, W * 0.55));
+  // 露台的玻璃栏板：底层屋顶上没被上层盖住的那一截
+  if (n >= 2) {
+    const tl = Lh - ux, tc = -vs * (Lh / 2 - tl / 2), ty = y1 + sh + 0.14 + 0.28;
+    for (const sd of [1, -1]) gl.add(BOX, '#ffffff', M(tc, ty, sd * (half + 0.08), 0, 0, 0, tl, 0.56, 0.03));
+    gl.add(BOX, '#ffffff', M(-vs * (Lh / 2 + 0.08), ty, 0, 0, 0, 0, 0.03, 0.56, W + 0.16));
+  }
+  altOpenings(P, (bl, f, u, v, nn, du, dv, dn, color, geo = BOX) => {
+    let x, z, sx, sz;
+    if (f === '+z') { x = u; z = half + nn; sx = du; sz = dn; } else if (f === '-z') { x = -u; z = -(half + nn); sx = du; sz = dn; }
+    else if (f === '+x') { x = Lh / 2 + nn; z = -u; sx = dn; sz = du; } else { x = -(Lh / 2 + nn); z = u; sx = dn; sz = du; }
+    bl.add(geo, color, M(x, v, z, 0, 0, 0, sx, dv, sz));
+  }, bd, wb, y1, sh, dark, Lh, n);
+  const base = new THREE.Group();
+  base.add(bd.mesh());
+  if (wb.parts.length) base.add(wb.mesh(windowMat, false));
+  if (gl.parts.length) { const g = gl.mesh(glassMat, false); g.receiveShadow = false; base.add(g); }
+  root.add(base); rise(base, delay, 0.6, 'stone');
+  roof.add(rbd.mesh()); root.add(roof); drop(roof, delay + 0.45, 0.75, 4, 'roof');
+  if (!quietBuild) tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
+  const ext = Math.hypot(Lh, W) / 2 + 1.6;
+  hideGrass(e, [cx - ext, cz - ext, cx + ext, cz + ext], (x, z) => sdf(x, z) < 0.5);
+  forCells(cx - ext, cz - ext, cx + ext, cz + ext, (x, z, k) => { const d = sdf(x, z); if (d < 1.0) paintMax(e, 'P', k, 0.4 * smooth(1.0, 0.2, d)); });
+  updateTerrain(true);
+  return e;
+}
 // 未来风：带玻璃窗带和太阳能板的模块屋；和风：深色木构、白色障子、深挑檐歇山顶
-function buildHouseAlt(a, b, delay, roofHex) {
-  let dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
-  if (len < 0.5) {
-    const v = new THREE.Vector3(); camera.getWorldDirection(v);
-    dx = -v.z; dz = v.x; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l; len = 3.4;
-    a = { x: a.x - dx * len / 2, z: a.z - dz * len / 2 };
-  } else { dx /= len; dz /= len; }
-  const Lh = clamp(len, 2.4, 9), W = clamp(2.3 + Lh * 0.18, 2.5, 3.8), half = W / 2;
+function buildHouseAlt(a, b, delay, roofHex, spec = null) {
+  const sci = ST.build === 'scifi';
+  const hs = houseSpec(a, b, spec, L => sci ? (L >= 5 ? 2.6 : 2.0) : (L >= 5 ? 2.3 : 1.9), sci ? 0.1 : 0.8), P = hs.P, dx = hs.dx, dz = hs.dz, Lh = hs.Lh;
+  a = P.a; roofHex = P.roofHex || roofHex; P.roofHex = roofHex; P.custom = true;
+  const W = P.W, half = W / 2;
   const cx = a.x + dx * Lh / 2, cz = a.z + dz * Lh / 2, th = yaw(dx, dz), ct = Math.cos(th), st = Math.sin(th);
   const toWorld = (lx, lz) => ({ x: cx + lx * ct + lz * st, z: cz - lx * st + lz * ct });
   let y0 = heightAt(cx, cz);
@@ -1602,11 +2032,23 @@ function buildHouseAlt(a, b, delay, roofHex) {
   };
   e.dist = sdf; clearNature(e);
   const root = new THREE.Group(); root.position.set(cx, y0, cz); root.rotation.y = th; e.group.add(root);
+  e.root = root; e.y0 = y0; e.spec = P;
   const bd = new Builder(), wb = new Builder(), gb = new Builder(), rbd = new Builder(), roof = new THREE.Group();
+  const wpart = (bl, f, u, v, n, du, dv, dn, color, geo = BOX) => {
+    let x, z, sx, sz;
+    if (f === '+z') { x = u; z = half + n; sx = du; sz = dn; }
+    else if (f === '-z') { x = -u; z = -(half + n); sx = du; sz = dn; }
+    else if (f === '+x') { x = Lh / 2 + n; z = -u; sx = dn; sz = du; }
+    else { x = -(Lh / 2 + n); z = u; sx = dn; sz = du; }
+    bl.add(geo, color, M(x, v, z, 0, 0, 0, sx, dv, sz));
+  };
   if (ST.build === 'scifi') {
-    const h = Lh >= 5 ? 2.6 : 2.0, y1 = 0.3, top = y1 + h;
+    const h = P.H, y1 = 0.3, top = y1 + h, body = P.wallCol ? new THREE.Color(P.wallCol) : jc('#eef1f3', 0.01);
+    P.wallCol = '#' + body.getHexString();
+    e.pitchK = 0.06; e.storeys = Math.max(1, Math.round(h / 1.6)); e.sh = h / e.storeys; e.doorY = y1;
     bd.add(BOX, jc('#8a939c'), M(0, -0.3, 0, 0, 0, 0, Lh + 0.3, 1.2, W + 0.3));
-    bd.add(BOX, jc('#eef1f3', 0.01), M(0, y1 + h / 2, 0, 0, 0, 0, Lh, h, W));
+    bd.add(BOX, body, M(0, y1 + h / 2, 0, 0, 0, 0, Lh, h, W));
+    altOpenings(P, wpart, bd, wb, y1, e.sh, '#c3cbd2', Lh, e.storeys);
     for (const sx of [1, -1]) for (const sz of [1, -1]) bd.add(CYL, '#dfe5e9', M(sx * Lh / 2, y1 + h / 2, sz * half, 0, 0, 0, 0.18, h, 0.18));
     for (const sd of [1, -1]) {
       wb.add(BOX, '#ffffff', M(0, y1 + h * 0.6, sd * (half + 0.01), 0, 0, 0, Lh * 0.8, h * 0.32, 0.04));
@@ -1615,13 +2057,16 @@ function buildHouseAlt(a, b, delay, roofHex) {
     }
     bd.add(BOX, '#3a4652', M(Lh * 0.25, y1 + 0.7, half + 0.02, 0, 0, 0, 0.8, 1.4, 0.04));
     gb.add(BOX, neon(ST.accent, 2.6), M(Lh * 0.25, y1 + 1.46, half + 0.04, 0, 0, 0, 0.8, 0.04, 0.02));
-    rbd.add(BOX, jc(roofHex), M(0, top + 0.08, 0, 0, 0, 0, Lh + 0.2, 0.16, W + 0.2));
+    rbd.add(BOX, jc(roofHex), M(0, top + 0.08, 0, 0, 0, 0, Lh + 2 * P.eave, 0.16, W + 2 * P.eave));
     const np = Math.max(1, Math.floor(Lh / 1.1));
     for (let i = 0; i < np; i++) rbd.add(BOX, '#24365e', M(-Lh / 2 + (i + 0.5) * Lh / np, top + 0.32, -half * 0.2, 0, -0.3, 0, Lh / np * 0.85, 0.04, W * 0.5));
     const dome = new THREE.Mesh(new THREE.SphereGeometry(W * 0.22, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), glassMat);
     dome.position.set(Lh * 0.3, top + 0.16, half * 0.35); dome.userData.own = true; roof.add(dome);
   } else {
-    const h = Lh >= 5 ? 2.3 : 1.9, y1 = 0.55, top = y1 + h, wood = '#3a2a20', rh = W * 0.48, o = 0.8, oG = 0.6;
+    const h = P.H, y1 = 0.55, top = y1 + h, wood = '#3a2a20', rh = W * 0.48, o = P.eave, oG = o * 0.75;
+    const wallC = P.wallCol ? new THREE.Color(P.wallCol) : jc(pick(PLASTER), 0.01);
+    P.wallCol = '#' + wallC.getHexString();
+    e.pitchK = 0.48; e.storeys = Math.max(1, Math.round(h / 1.9)); e.sh = h / e.storeys; e.doorY = y1;
     bd.add(BOX, jc('#8d8a82'), M(0, -0.3, 0, 0, 0, 0, Lh + 1.0, 1.1, W + 1.0));
     bd.add(BOX, jc('#7a5a3e'), M(0, y1 - 0.05, 0, 0, 0, 0, Lh + 0.9, 0.1, W + 0.9));
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) bd.add(BOX, jc(wood), M(sx * (Lh / 2 + 0.4), y1 - 0.3, sz * (half + 0.4), 0, 0, 0, 0.1, 0.5, 0.1));
@@ -1634,7 +2079,8 @@ function buildHouseAlt(a, b, delay, roofHex) {
       bd.add(BOX, jc(wood), M(u, y1 + h * 0.46, sd * (half + 0.025), 0, 0, 0, 0.025, h * 0.82, 0.015));
     }
     for (const sd of [1, -1]) wb.add(BOX, '#ffffff', M(sd * (Lh / 2 + 0.005), y1 + h * 0.46, 0, 0, 0, 0, 0.03, h * 0.82, W - 0.3));
-    bd.add(BOX, jc(pick(PLASTER), 0.01), M(0, y1 + h / 2, 0, 0, 0, 0, Lh - 0.02, h, W - 0.02));
+    bd.add(BOX, wallC, M(0, y1 + h / 2, 0, 0, 0, 0, Lh - 0.02, h, W - 0.02));
+    altOpenings(P, wpart, bd, wb, y1, e.sh, jc(wood), Lh, e.storeys);
     for (let i = 0; i <= np; i++) for (const sd of [1, -1]) bd.add(BOX, jc(wood), M(-Lh / 2 + i * Lh / np, y1 + h / 2, sd * half, 0, 0, 0, 0.12, h, 0.12));
     for (const sd of [1, -1]) bd.add(BOX, jc(wood), M(0, top - 0.08, sd * half, 0, 0, 0, Lh + 0.12, 0.16, 0.14));
     for (const sd of [1, -1]) bd.add(BOX, jc(wood), M(sd * Lh / 2, top - 0.08, 0, 0, 0, 0, 0.14, 0.16, W + 0.12));
@@ -1661,11 +2107,85 @@ function buildHouseAlt(a, b, delay, roofHex) {
   root.add(base); rise(base, delay, 0.6, 'wood');
   if (rbd.parts.length) roof.add(rbd.mesh());
   root.add(roof); drop(roof, delay + 0.45, 0.75, 4, 'roof');
-  tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
+  if (!quietBuild) tween(0.01, delay + 0.75, () => {}, () => dust(cx, cz, 10, Lh * 0.6));
   const ext = Math.hypot(Lh, W) / 2 + 1.6;
   hideGrass(e, [cx - ext, cz - ext, cx + ext, cz + ext], (x, z) => sdf(x, z) < 0.5);
   forCells(cx - ext, cz - ext, cx + ext, cz + ext, (x, z, k) => { const d = sdf(x, z); if (d < 1.2) paintMax(e, 'P', k, 0.5 * smooth(1.2, 0.2, d)); });
   updateTerrain(true);
+  return e;
+}
+
+// ================= 建造：泳池 =================
+// 沿长边拖出一个长方形泳池：把地面挖下去、四周铺一圈石材池沿；池壁池底是浅蓝马赛克，一端有台阶，长边放两张躺椅和一把遮阳伞；夜里池底亮起蓝光
+const poolWaterMat = new THREE.MeshPhysicalMaterial({
+  color: '#a8ecf6', transmission: 0.9, thickness: 0.8, ior: 1.33, roughness: 0.03, metalness: 0,
+  normalMap: waterNormal, normalScale: new THREE.Vector2(0.25, 0.25), attenuationColor: new THREE.Color('#2fb8d8'), attenuationDistance: 1.0, envMapIntensity: 1.0
+});
+const poolTileMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: '#3fd0ff', emissiveIntensity: 0, envMapIntensity: 0.6 });
+function buildPool(a, b, delay = 0) {
+  let dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+  if (len < 0.5) {
+    const v = new THREE.Vector3(); camera.getWorldDirection(v);
+    dx = -v.z; dz = v.x; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l; len = 6;
+    a = { x: a.x - dx * 3, z: a.z - dz * 3 };
+  } else { dx /= len; dz /= len; }
+  const L = clamp(len, 3, 14), W = clamp(2.4 + L * 0.12, 2.6, 4.2), hl = L / 2, hw = W / 2, deck = 1.0, depth = 1.3;
+  const cx = a.x + dx * hl, cz = a.z + dz * hl, th = yaw(dx, dz), ct = Math.cos(th), st = Math.sin(th);
+  const boxD = (x, z, ex, ez) => {
+    const ox = x - cx, oz = z - cz, qx = Math.abs(ox * ct - oz * st) - ex, qz = Math.abs(ox * st + oz * ct) - ez;
+    return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
+  };
+  let y0 = 0, ns = 0;
+  for (let i = -2; i <= 2; i++) for (let j = -1; j <= 1; j++) { y0 += heightAt(cx + ct * hl * i / 2 + st * hw * j, cz - st * hl * i / 2 + ct * hw * j); ns++; }
+  y0 /= ns;
+  const e = makeEntity('pool', { block: true }); e.x = cx; e.z = cz;
+  e.dist = (x, z) => boxD(x, z, hl + deck, hw + deck);
+  clearNature(e);
+  // 地形：池子范围（再往外放一点，斜坡藏在池沿下面）挖下去，池沿那一圈整平，再往外慢慢接回原地面
+  const R0 = hl + deck + 1.8, rc = [cx - R0, cz - R0, cx + R0, cz + R0];
+  forCells(rc[0], rc[1], rc[2], rc[3], (x, z, k) => {
+    const dIn = boxD(x, z, hl + 0.45, hw + 0.45), dDeck = boxD(x, z, hl + deck, hw + deck);
+    let target;
+    if (dIn < 0) target = y0 - depth - 0.15;
+    else if (dDeck < 0) target = y0 - 0.03;
+    else if (dDeck < 1.5) target = lerp(y0 - 0.03, H[k], smooth(0, 1.5, dDeck));
+    else return;
+    editGrid(e, 'D', k, target - H[k]);
+  });
+  updateTerrain(true);
+  hideGrass(e, rc, (x, z) => boxD(x, z, hl + deck, hw + deck) < 0.1);
+  const root = new THREE.Group(); root.position.set(cx, y0, cz); root.rotation.y = th; e.group.add(root);
+  const bd = new Builder(), tb = new Builder();
+  for (const sd of [1, -1]) {
+    bd.add(BOX, jc('#e8e0d0', 0.015), M(0, 0.04, sd * (hw + deck / 2), 0, 0, 0, L + 2 * deck, 0.12, deck));
+    bd.add(BOX, jc('#e8e0d0', 0.015), M(sd * (hl + deck / 2), 0.04, 0, 0, 0, 0, deck, 0.12, W));
+  }
+  for (let x = -hl - deck + 0.9; x < hl + deck; x += 0.9) for (const sd of [1, -1]) bd.add(BOX, '#d4cab6', M(x, 0.1, sd * (hw + deck / 2), 0, 0, 0, 0.02, 0.01, deck));
+  tb.add(BOX, '#bfe6ee', M(0, -depth - 0.05, 0, 0, 0, 0, L, 0.1, W));
+  for (const sd of [1, -1]) {
+    tb.add(BOX, '#c8eaf2', M(0, -depth / 2, sd * (hw + 0.05), 0, 0, 0, L + 0.2, depth + 0.1, 0.1));
+    tb.add(BOX, '#c8eaf2', M(sd * (hl + 0.05), -depth / 2, 0, 0, 0, 0, 0.1, depth + 0.1, W));
+    tb.add(BOX, '#2a78a8', M(0, -0.14, sd * (hw - 0.002), 0, 0, 0, L, 0.1, 0.02));
+    tb.add(BOX, '#2a78a8', M(sd * (hl - 0.002), -0.14, 0, 0, 0, 0, 0.02, 0.1, W));
+  }
+  tb.add(BOX, '#3a88b8', M(0, -depth + 0.005, 0, 0, 0, 0, L * 0.8, 0.01, 0.12));
+  for (let k = 0; k < 3; k++) { const top = -0.3 * (k + 1); tb.add(BOX, '#d4eef4', M(-hl + 0.175 * (k + 1), (top - depth) / 2, 0, 0, 0, 0, 0.35 * (k + 1), depth + top, W * 0.6)); }
+  // 躺椅和遮阳伞
+  for (let i = 0; i < 2; i++) {
+    const x = -hl * 0.35 + i * 0.85, z = hw + deck * 0.5;
+    bd.add(BOX, jc('#8a5a3a', 0.02), M(x, 0.22, z, 0, 0, 0, 1.45, 0.08, 0.5));
+    bd.add(BOX, '#f4f2ee', M(x + 0.12, 0.3, z, 0, 0, 0, 1.15, 0.08, 0.46));
+    bd.add(BOX, '#f4f2ee', M(x - 0.58, 0.48, z, 0, 0, -0.75, 0.5, 0.08, 0.46));
+    for (const lx of [-0.6, 0.6]) bd.add(BOX, '#8a5a3a', M(x + lx, 0.13, z, 0, 0, 0, 0.05, 0.16, 0.46));
+  }
+  const ux = -hl * 0.35 + 1.75, uz = hw + deck * 0.5;
+  bd.add(CYL, '#d8d4cc', M(ux, 1.1, uz, 0, 0, 0, 0.03, 2.1, 0.03));
+  bd.add(CONE, '#f2efe6', M(ux, 2.05, uz, 0, 0, 0, 1.1, 0.4, 1.1));
+  const dm = bd.mesh(); root.add(dm);
+  const tm = tb.mesh(poolTileMat, false); root.add(tm);
+  const wm = new THREE.Mesh(scaleUV(new THREE.PlaneGeometry(L, W).rotateX(-Math.PI / 2), L * 0.22, W * 0.22), poolWaterMat);
+  wm.position.y = -0.1; wm.receiveShadow = true; wm.userData.own = true; root.add(wm);
+  pop(root, delay, 0.6, 'water');
   return e;
 }
 
@@ -1679,13 +2199,20 @@ function buildPath(raw, delay = 0) {
   e.dist = (x, z) => distPoly(x, z, pts) - 0.6;
   clearNature(e);
   // 石子路 / 发光石路 / 六边形地砖 / 和风踏脚石
-  const PS = ST.path, geo = PS === 'hex' ? HEX : PEB;
+  const PS = ST.path, geo = PS === 'hex' ? HEX : PS === 'slab' ? BOX : PEB;
   const inst = new THREE.InstancedMesh(geo, pathMat, pts.length * 3), ginst = new THREE.InstancedMesh(geo, neonInstMat, pts.length * 3);
   inst.receiveShadow = true; inst.frustumCulled = false; ginst.frustumCulled = false;
   let k = 0, gk = 0;
   for (let i = 0; i < pts.length; i++) {
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
     let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+    if (PS === 'slab') {
+      // 别墅：一块块横放的浅色大石板，中间露着草
+      if (i % 3) continue;
+      _m.compose(_p.set(pts[i].x, heightAt(pts[i].x, pts[i].z) + 0.03, pts[i].z), _q.setFromAxisAngle(UP, yaw(tx, tz)), _s.set(0.5, 0.07, 1.15));
+      inst.setMatrixAt(k, _m); inst.setColorAt(k, jc(pick(COBBLE), 0.02)); k++;
+      continue;
+    }
     if (PS === 'stepping') {
       if (i % 2) continue;
       const off = (i % 4 ? 0.18 : -0.18) + rand(-0.05, 0.05), x = pts[i].x - tz * off, z = pts[i].z + tx * off;
@@ -1718,6 +2245,12 @@ function buildPath(raw, delay = 0) {
   hideGrass(e, bb, (x, z) => distPoly(x, z, pts) < 0.78);
   forCells(bb[0], bb[1], bb[2], bb[3], (x, z, kk) => paintMax(e, 'P', kk, 0.95 * smooth(1.0, 0.5, distPoly(x, z, pts))));
   updateTerrain(true);
+  // 小路穿过城墙的地方自动开一道拱门
+  for (const w of entities.slice()) {
+    if (w.type !== 'wall' || w.dead || !w.pts) continue;
+    const add = polyCrossings(w.pts, e.raw).filter(q => !(w.gates || []).some(g => Math.hypot(g.x - q.x, g.z - q.z) < 3));
+    if (add.length) rebuildWallGates(w, [...(w.gates || []), ...add.map(q => ({ x: q.x, z: q.z, t: false }))]);
+  }
   return e;
 }
 
@@ -1729,6 +2262,23 @@ function buildFence(raw, delay = 0) {
   e.dist = (x, z) => distPoly(x, z, pts) - 0.18;
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i], y = heightAt(p.x, p.z), b = new Builder(), gb = new Builder(), F = ST.fence;
+    if (F === 'hedge') {
+      let hc = null;
+      // 别墅：修剪整齐的黄杨绿篱，顶上几团鼓起来的枝叶
+      if (i < pts.length - 1) {
+        const q = pts[i + 1], dx = q.x - p.x, dz = q.z - p.z, dy = heightAt(q.x, q.z) - y, len = Math.hypot(dx, dz);
+        b.add(BOX, jc('#2f5428', 0.03), M(dx / 2, 0.38 + dy / 2, dz / 2, yaw(dx, dz), 0, Math.atan2(dy, len), len + 0.1, 0.8, 0.32));
+        // 外面一层叶片卡，和高绿篱、树冠同一种叶子
+        const cb = new Crown('round', 0.3);
+        for (let t = 0; t <= 1.001; t += 0.38 / Math.max(len, 0.38)) for (const hy of [0.32, 0.72]) cb.cluster(dx * t, hy + dy * t, dz * t, rand(0.3, 0.36), hy > 0.6 ? 0.75 : 1, Math.random(), 95);
+        hc = cb.mesh(); recolorCrown(hc, HEDGE_PAL);
+      }
+      if (!b.parts.length) continue;
+      const m = b.mesh(); m.position.set(p.x, y, p.z); e.group.add(m);
+      if (hc) m.add(hc);
+      rise(m, delay + i * 0.06, 0.45, 'leaf');
+      continue;
+    }
     const wood = jc(F === 'magic' ? '#4a3a4a' : F === 'scifi' ? '#e6eaee' : F === 'bamboo' ? '#b8b060' : '#9a7652', 0.04);
     const rail = F === 'magic' ? '#56445a' : F === 'bamboo' ? '#a8a858' : '#a17d58';
     if (F === 'bamboo') {
@@ -1786,7 +2336,16 @@ const SPECIES = {
   shidare:     { name: '垂枝樱', form: 'weeping', bark: '#4a3a36', cell: 'ovate', springCell: 'redbudFlower', leaf: { spring: ['#ffd0e0', '#ffb8cc', '#fff0f4'], summer: ['#6a9e4a', '#76a852'], autumn: ['#e0a060', '#d08850'], winter: null } },
   blackpine:   { name: '黑松', form: 'niwaki', bark: '#3f3630', cell: 'pine', leaf: { all: ['#2f5a3a', '#3a6544', '#2a5034'] } },
   japmaple:    { name: '鸡爪槭', form: 'round', bark: '#4a3a34', cell: 'maple', leaf: { spring: ['#c8503e', '#d86a4a'], summer: ['#9a3a3a', '#b04a40', '#7a3038'], autumn: ['#e83a2a', '#f05a2a', '#d02a30'], winter: null } },
-  bamboo:      { name: '竹子', form: 'bamboo', bark: '#8fae4a', cell: 'bamboo', leaf: { all: ['#6fa04a', '#7fb052', '#5f9040'] } }
+  bamboo:      { name: '竹子', form: 'bamboo', bark: '#8fae4a', cell: 'bamboo', leaf: { all: ['#6fa04a', '#7fb052', '#5f9040'] } },
+  // 未来科技（续）
+  solartree:   { name: '光伞树', form: 'solar', bark: '#e8ecef', cell: 'round', leaf: { all: ['#ffffff'] } },
+  fibertree:   { name: '光纤树', form: 'fiber', bark: '#dfe5ea', cell: 'round', leaf: { all: ['#ffffff'] } },
+  // 洛杉矶豪宅庭院
+  fanpalm:     { name: '扇棕', form: 'palm', bark: '#8a7a66', cell: 'bamboo', card: 0.42, leaf: { all: ['#5f8a4a', '#6f9a52', '#557f44', '#7aa45a'] } },
+  cypress:     { name: '意大利柏', form: 'column', bark: '#5a4a3e', cell: 'sequoia', leaf: { all: ['#2f5a3a', '#36643f', '#2a5034'] } },
+  olive:       { name: '橄榄', form: 'spread', bark: '#6a5f50', cell: 'ovate', leaf: { all: ['#8a9a72', '#9aa884', '#7a8c66', '#a4b090'] } },
+  jacaranda:   { name: '蓝花楹', form: 'vase', bark: '#5a4a40', cell: 'ovate', springCell: 'redbudFlower', leaf: { spring: ['#8f7ad8', '#a08ae0', '#7a68c8', '#b09ae8'], summer: ['#5f9a46', '#6aa34e', '#78ac58'], autumn: ['#c8b050', '#b8a040', '#a8b04a'], winter: ['#6a9a4e', '#78a456'] } },
+  sycamore:    { name: '加州悬铃木', form: 'spread', bark: '#c8bca8', cell: 'maple', leaf: { spring: ['#a8cc6a', '#b8d47a'], summer: ['#5a8a3e', '#6a9a46', '#4f7f36'], autumn: ['#c8a040', '#b88a38', '#d8b850'], winter: null } }
 };
 for (const sp of Object.values(SPECIES)) if (sp.leaf.all) { const a = sp.leaf.all; sp.leaf = { spring: a, summer: a, autumn: a, winter: a }; }
 
@@ -1911,7 +2470,17 @@ const leafAtlas = (() => {
   return t;
 })();
 const leafCardMat = new THREE.MeshStandardMaterial({ map: leafAtlas, vertexColors: true, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.72, envMapIntensity: 0.45 });
-leafCardMat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  normal = normalize(vNormal);'); };
+// 叶片卡随风抖动：每张卡按自己的世界坐标错开相位，阵风经过时抖得更厉害
+leafCardMat.onBeforeCompile = sh => {
+  Object.assign(sh.uniforms, { uWind: grassU.uWind, uWindDir: grassU.uWindDir, uSwayT: grassU.uSwayT, uGustT: grassU.uGustT });
+  sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  normal = normalize(vNormal);');
+  sh.vertexShader = 'uniform float uWind, uSwayT, uGustT;\nuniform vec2 uWindDir;\n' + WIND_GLSL + '\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+    vec3 wp0 = (modelMatrix * vec4(position, 1.0)).xyz;
+    float lg = 0.5 + 0.5 * sin(dot(wp0.xz, uWindDir) * 0.45 - uGustT);
+    float lf = 0.6 * sin(uSwayT * 2.3 + wp0.x * 3.1 + wp0.y * 2.3 + wp0.z * 2.7) + 0.4 * sin(uSwayT * 3.7 + wp0.z * 4.3 - wp0.x * 3.3);
+    vec3 lo = (vec3(uWindDir.x, 0.45, uWindDir.y) * lf + vec3(uWindDir.x, 0.0, uWindDir.y) * lg * 0.6) * 0.03 * (0.25 + uWind * (0.5 + lg));
+    transformed += windLocal(lo, mat3(modelMatrix));`);
+};
 addSnow(leafCardMat, 'leafcard', 0.9);
 // 魔法 / 未来风格里，树叶、花和草尖会微微发光
 const glowU = { value: 0 }, grassGlowU = { value: 0 };
@@ -1971,14 +2540,19 @@ const LEGACY_TREE = { leaf: ['maple', 'redmaple', 'oak', 'birch', 'aspen', 'swee
 function buildTree(key) {
   const sp = SPECIES[key], tb = new Builder(), cb = new Crown(sp.cell, sp.card || 0.5);
   const v0 = new THREE.Vector3(), v1 = new THREE.Vector3(), q = new THREE.Quaternion();
+  const segs = [], blobs = [];   // 记下所有枝干和叶团，给落叶树补冬天的细枝
   const limb = (x0, y0, z0, x1, y1, z1, rad) => {
     v1.set(x1 - x0, y1 - y0, z1 - z0); const l = v1.length(); if (l < 0.01) return;
+    segs.push([x0, y0, z0, x1, y1, z1]);
     q.setFromUnitVectors(UP, v1.normalize());
-    tb.add(TRUNK, jc(sp.bark, 0.03), new THREE.Matrix4().compose(v0.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), q, new THREE.Vector3(rad, l, rad)));
+    const col = jc(sp.bark, 0.03);
+    tb.add(TRUNK, col, new THREE.Matrix4().compose(v0.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), q, new THREE.Vector3(rad, l, rad)));
+    // 顶端再接一段尖锥；中间相连的几节，尖锥会藏进下一节里。蘑菇的柄顶着菌盖，不加
+    if (sp.form !== 'mushroom') { const tr = rad * 0.65; tb.add(TIP, col, new THREE.Matrix4().compose(v0.set(x1, y1, z1), q, new THREE.Vector3(tr, Math.min(tr * 4, l * 0.6), tr))); }
   };
   // 每个叶团记一个随机值 aJit，换季时据此重新上色
   const blob = (x, y, z, r, sy = 0.86, from = null) => {
-    cb.cluster(x, y, z, r, sy, Math.random());
+    cb.cluster(x, y, z, r, sy, Math.random()); blobs.push([x, y, z, r]);
     if (from) limb(from[0], from[1], from[2], x, y - r * 0.2, z, 0.035);
   };
   const ell = (cx, cy, cz, rx, ry, rz, n, r0, r1, from) => {
@@ -2091,6 +2665,64 @@ function buildTree(key) {
       }
       break;
     }
+    case 'solar': {
+      // 光伞树：细白的树干撑起一顶六边形太阳能板拼成的伞（中间一块、外圈六块微微向外倾），伞下一圈灯带
+      cr = 0; const h = rand(2.4, 3.2), pb = new Builder(), nb = new Builder();
+      limb(0, -0.3, 0, 0, h + 0.3, 0, 0.09);
+      const panel = (x, y, z, a, tilt, s) => {
+        pb.add(HEX, '#24365e', M(x, y, z, -a, 0, tilt, s, 0.04, s));
+        pb.add(HEX, '#e9edf0', M(x, y - 0.03, z, -a, 0, tilt, s * 1.06, 0.03, s * 1.06));
+      };
+      panel(0, h + 0.36, 0, Math.PI / 6, 0, 0.42);
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * Math.PI * 2, x = Math.cos(a) * 0.76, z = Math.sin(a) * 0.76;
+        panel(x, h + 0.24, z, a, -0.28, 0.41);
+        limb(0, h + 0.1, 0, x * 0.85, h + 0.2, z * 0.85, 0.022);
+      }
+      nb.add(new THREE.TorusGeometry(0.62, 0.022, 6, 36), neon(ST.accent || '#5fe8ff', 2.4), M(0, h + 0.12, 0, 0, Math.PI / 2, 0));
+      extra = new THREE.Group(); extra.add(pb.mesh(vcMat, true), nb.mesh(neonMat, false));
+      break;
+    }
+    case 'fiber': {
+      // 光纤树：矮白树干上喷泉一样散开几十根细光纤，先往上冲再弯下来，末端一颗发光的珠子
+      cr = 0; const h = rand(0.9, 1.3), fb2 = new Builder(), nb = new Builder(), col = pick(['#5fe8ff', '#c86fff', '#ff6fd8', '#8fffd8']);
+      limb(0, -0.3, 0, 0, h, 0, 0.12);
+      const p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), dd = new THREE.Vector3(), qq = new THREE.Quaternion();
+      for (let i = 0; i < 34; i++) {
+        const a = rand(0, 6.28), up = rand(0.6, 1.3), out = rand(0.8, 1.5), v = up * 2.4, g = v + rand(0.3, 1.0);
+        p0.set(0, h, 0);
+        for (let k = 1; k <= 5; k++) {
+          const t = k / 5; p1.set(Math.cos(a) * out * t, h + v * t - g * t * t, Math.sin(a) * out * t);
+          dd.subVectors(p1, p0); const l = dd.length(); qq.setFromUnitVectors(UP, dd.normalize());
+          fb2.add(CYL_LO, k < 3 ? '#e6f2f8' : '#cfe4f0', new THREE.Matrix4().compose(p0.clone().add(p1).multiplyScalar(0.5), qq, new THREE.Vector3(0.012, l, 0.012)));
+          p0.copy(p1);
+        }
+        nb.add(ICO, neon(col, 2.6), M(p0.x, p0.y, p0.z, 0, 0, 0, 0.045, 0.045, 0.045));
+      }
+      extra = new THREE.Group(); extra.add(fb2.mesh(vcMat, false), nb.mesh(neonMat, false));
+      break;
+    }
+    case 'palm': {
+      // 扇棕：细高、微微弯的树干分几节由粗变细；顶上十几片扇形叶：一根叶柄伸出去，末端张开一把放射状的窄叶片，越往下的叶子垂得越厉害；
+      // 树冠下面挂一圈干枯下垂的老叶。叶子是实打实的几何片，不用叶片卡，轮廓才像棕榈
+      cr = 0; const h = rand(3.8, 5.0), bx = rand(-0.4, 0.4), bz = rand(-0.4, 0.4), pb = new Builder();
+      let px = 0, py = -0.3, pz = 0;
+      for (let k = 1; k <= 6; k++) { const t = k / 6, x = bx * t * t, y = -0.3 + h * t, z = bz * t * t; limb(px, py, pz, x, y, z, 0.15 - 0.05 * t); px = x; py = y; pz = z; }
+      const nf = 13 + Math.floor(rand(0, 4));
+      for (let f = 0; f < nf; f++) {
+        const a = f / nf * Math.PI * 2 + rand(-0.2, 0.2), el = lerp(0.9, -0.55, (f % 3) / 2) + rand(-0.15, 0.15), pl = rand(0.55, 0.75);
+        const ex = px + Math.cos(a) * Math.cos(el) * pl, ey = py + Math.sin(el) * pl, ez = pz + Math.sin(a) * Math.cos(el) * pl;
+        pb.add(CYL_LO, jc('#6f8a48', 0.04), new THREE.Matrix4().compose(new THREE.Vector3((px + ex) / 2, (py + ey) / 2, (pz + ez) / 2), new THREE.Quaternion().setFromUnitVectors(UP, new THREE.Vector3(ex - px, ey - py, ez - pz).normalize()), new THREE.Vector3(0.025, pl, 0.025)));
+        const col = pick(sp.leaf.summer);
+        for (let k = 0; k < 9; k++) {
+          const fa = a + (k / 8 - 0.5) * 1.9, droop = -el + 0.35 + Math.abs(k / 8 - 0.5) * 0.4;
+          pb.add(PETAL, jc(col, 0.04), M(ex, ey, ez, -fa, 0, -droop, rand(0.75, 0.9), 1, 0.09));
+        }
+      }
+      for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2 + rand(-0.2, 0.2); pb.add(PETAL, jc('#9a7a50', 0.05), M(px, py - 0.15, pz, -a, 0, -rand(1.15, 1.4), rand(0.8, 1.0), 1, 0.16)); }
+      extra = pb.mesh(vcMat, true);
+      break;
+    }
     case 'niwaki': {
       // 修剪成云片状的庭园松：弯曲的主干，水平伸出的枝端各托一片扁平的松叶团
       cr = 0; const h = rand(2.2, 2.8), bx = rand(-0.5, 0.5), bz = rand(-0.5, 0.5);
@@ -2122,11 +2754,13 @@ function buildTree(key) {
       cr = 0; const n = 7 + Math.floor(rand(0, 5));
       for (let i = 0; i < n; i++) {
         const a = rand(0, 6.28), d = rand(0, 0.7), x0 = Math.cos(a) * d, z0 = Math.sin(a) * d, h = rand(3.0, 4.6), lx = rand(-0.25, 0.25), lz = rand(-0.25, 0.25);
+        // 竹竿越往上越细，最顶上一节不再有竹节，接一小段细梢收尖
         for (let q = 0; q < 7; q++) {
-          const t0 = q / 7, t1 = (q + 1) / 7;
-          limb(x0 + lx * t0, -0.1 + h * t0, z0 + lz * t0, x0 + lx * t1, -0.1 + h * t1, z0 + lz * t1, 0.045);
-          tb.add(CYL, jc('#6f8a3a', 0.03), M(x0 + lx * t1, -0.1 + h * t1, z0 + lz * t1, 0, 0, 0, 0.05, 0.03, 0.05));
+          const t0 = q / 7, t1 = (q + 1) / 7, r = 0.045 * (1 - 0.45 * t0);
+          limb(x0 + lx * t0, -0.1 + h * t0, z0 + lz * t0, x0 + lx * t1, -0.1 + h * t1, z0 + lz * t1, r);
+          if (q < 6) tb.add(CYL, jc('#6f8a3a', 0.03), M(x0 + lx * t1, -0.1 + h * t1, z0 + lz * t1, 0, 0, 0, r * 1.1, 0.03, r * 1.1));
         }
+        limb(x0 + lx, -0.1 + h, z0 + lz, x0 + lx * 1.12 + rand(-0.1, 0.1), -0.1 + h * 1.1, z0 + lz * 1.12 + rand(-0.1, 0.1), 0.012);
         for (let k = 0; k < 3; k++) { const t = rand(0.55, 1.0); blob(x0 + lx * t + rand(-0.3, 0.3), -0.1 + h * t, z0 + lz * t + rand(-0.3, 0.3), rand(0.3, 0.42), 0.9); }
       }
       break;
@@ -2149,7 +2783,48 @@ function buildTree(key) {
       break;
     }
   }
-  return { trunk: tb.mesh(vcMat, true), crown: cb.mesh(), cr, giant: sp.form === 'giant', extra };
+  return { trunk: tb.mesh(vcMat, true), crown: cb.mesh(), cr, giant: sp.form === 'giant', extra, twigs: sp.leaf.winter ? null : buildTwigs(sp, segs, blobs) };
+}
+// 冬天落光叶子后的细枝：每个叶团先从最近的枝干接一根枝过来，再向外分出几根细枝和更细的小杈
+function buildTwigs(sp, segs, blobs) {
+  if (!blobs.length || !segs.length) return null;
+  const wb = new Builder(), bc = new THREE.Color(sp.bark), bark = bc.lerp(new THREE.Color(bc.getHSL({}).l > 0.6 ? '#6f6050' : '#857868'), bc.getHSL({}).l > 0.6 ? 0.55 : 0.2), droop = sp.form === 'weeping';
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), o = new THREE.Vector3(), tmp = new THREE.Vector3(), mid = new THREE.Vector3(), sc = new THREE.Vector3(), q = new THREE.Quaternion();
+  const twig = (p0, p1, r) => {
+    d.subVectors(p1, p0); const l = d.length(); if (l < 0.03) return;
+    q.setFromUnitVectors(UP, d.multiplyScalar(1 / l));
+    wb.add(TWIG, jc(bark, 0.03), new THREE.Matrix4().compose(mid.addVectors(p0, p1).multiplyScalar(0.5), q, sc.set(r, l, r)));
+  };
+  const nearest = p => {
+    let best = Infinity;
+    for (const s of segs) {
+      tmp.set(s[3] - s[0], s[4] - s[1], s[5] - s[2]); const ll = tmp.lengthSq();
+      const t = ll > 0 ? clamp(((p.x - s[0]) * tmp.x + (p.y - s[1]) * tmp.y + (p.z - s[2]) * tmp.z) / ll, 0, 0.92) : 0;
+      const x = s[0] + tmp.x * t, y = s[1] + tmp.y * t, z = s[2] + tmp.z * t, dd = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
+      if (dd < best) { best = dd; a.set(x, y, z); }
+    }
+    return a;
+  };
+  for (const [x, y, z, r] of blobs) {
+    c.set(x, y, z);
+    const anchor = nearest(c);
+    if (anchor.distanceTo(c) > 0.12) twig(anchor.clone(), c, 0.032);
+    o.set(x, 0, z); if (o.lengthSq() < 0.01) o.set(rand(-1, 1), 0, rand(-1, 1)); o.normalize();
+    const n = 3 + Math.floor(rand(0, 2.5));
+    for (let i = 0; i < n; i++) {
+      const dir = new THREE.Vector3().randomDirection().addScaledVector(o, 0.8);
+      dir.y = droop ? -Math.abs(dir.y) - 0.9 : Math.abs(dir.y) * 0.6 + 0.45; dir.normalize();
+      const len = r * rand(0.8, 1.2);
+      b.copy(c).addScaledVector(dir, len); twig(c, b.clone(), 0.02);
+      for (let k = 0; k < 2; k++) {
+        const t = rand(0.4, 0.8), s0 = c.clone().addScaledVector(dir, len * t);
+        const d2 = new THREE.Vector3().randomDirection().addScaledVector(dir, 1.1); d2.y += droop ? -0.6 : 0.3; d2.normalize();
+        twig(s0, s0.clone().addScaledVector(d2, len * rand(0.35, 0.55)), 0.011);
+      }
+    }
+  }
+  const m = wb.mesh(vcMat, true); m.visible = false;
+  return m;
 }
 function recolorCrown(mesh, pal) {
   const g = mesh.geometry, jit = g.attributes.aJit, col = g.attributes.color, pos = g.attributes.position, cs = pal.map(h => new THREE.Color(h)), c = new THREE.Color();
@@ -2165,6 +2840,7 @@ function recolorCrown(mesh, pal) {
 function applyTreeSeason(e) {
   const sp = SPECIES[e.species], pal = sp.leaf[S.season];
   e.crown.visible = !!pal;
+  if (e.twigs) e.twigs.visible = !pal;
   if (!pal) return;
   if (sp.springCell) setCrownCell(e.crown.geometry, S.season === 'spring' ? sp.springCell : sp.cell);
   recolorCrown(e.crown, pal);
@@ -2173,9 +2849,12 @@ function spawnTree(x, z, kind, delay = 0) {
   if (kind === 'mix') kind = ST.trees.includes('sequoia') && Math.random() < 0.05 ? 'sequoia' : pick(ST.trees.filter(k => k !== 'sequoia'));
   if (LEGACY_TREE[kind]) kind = pick(LEGACY_TREE[kind]);
   const e = makeEntity('tree', { block: true }), t = buildTree(kind), g = new THREE.Group();
-  g.add(t.trunk, t.crown); if (t.extra) g.add(t.extra); g.position.set(x, heightAt(x, z) - 0.05, z); g.rotation.y = rand(0, 6);
+  g.add(t.trunk, t.crown); if (t.extra) g.add(t.extra); if (t.twigs) g.add(t.twigs); g.position.set(x, heightAt(x, z) - 0.05, z); g.rotation.y = rand(0, 6);
   const sc = t.giant ? rand(0.92, 1.08) : rand(0.85, 1.2); g.scale.setScalar(sc);
-  e.group.add(g); e.sway = g; e.ph = rand(0, 6); e.x = x; e.z = z; e.species = kind; e.crown = t.crown; e.cr = t.cr * sc;
+  e.group.add(g); e.sway = g; e.ph = rand(0, 6); e.x = x; e.z = z; e.species = kind; e.crown = t.crown; e.twigs = t.twigs; e.cr = t.cr * sc;
+  // 顺风倾斜的幅度：巨杉、松杉硬，竹子、垂柳软
+  const form = SPECIES[kind].form;
+  e.yawQ = g.quaternion.clone(); e.stiff = t.giant ? 0.3 : form === 'bamboo' ? 1.8 : form === 'palm' ? 1.35 : form === 'fiber' ? 1.2 : form === 'solar' ? 0.6 : form === 'weeping' ? 1.25 : form === 'mushroom' ? 0.15 : /spruce|pine|niwaki/.test(form) ? 0.7 : 1;
   applyTreeSeason(e);
   const rad = t.giant ? 1.3 : 0.55;
   e.dist = (px, pz) => Math.hypot(px - x, pz - z) - rad;
@@ -2416,7 +3095,7 @@ function spawnRock(x, z, delay = 0, big = 1) {
   const tb = new Builder();
   for (let i = 0; i < 7; i++) { const a = rand(0, 6.28), d = s * rand(0.85, 1.25); tb.add(PETAL, jc('#5d8c38', 0.05), M(Math.cos(a) * d, 0.02, Math.sin(a) * d, -a, 0, 0.7, 0.28 * rand(0.7, 1.2), 1, 0.05)); }
   if (Math.random() < 0.7) { const a = rand(0, 6.28), d = s * rand(0.9, 1.2), fs = rand(0.7, 1.0); addFern(tb, M(Math.cos(a) * d, 0, Math.sin(a) * d, rand(0, 6), 0, 0, fs, fs, fs)); }
-  const tufts = tb.mesh(flowerMat, false); tufts.position.copy(m.position);
+  const tufts = tb.mesh(flowerMat, false); tufts.position.copy(m.position); tufts.visible = waterDepthAt(x, z) < 0.05;
   e.group.add(tufts);
   e.dist = (px, pz) => Math.hypot(px - x, pz - z) - s;
   hideGrass(e, [x - 2 * s, z - 2 * s, x + 2 * s, z + 2 * s], (gx, gz) => Math.hypot(gx - x, gz - z) < s * 0.9);
@@ -2488,7 +3167,7 @@ const waterFx = (() => {
   scene.add(water, ice, peb);
   return { water, ice, peb, rocks: null, deco: null, cells: [] };
 })();
-function stampWater(e, p, rad, mode, depth = S.waterDepth) {
+function stampWater(e, p, rad, mode, depth = S.waterDepth, level = S.waterLevel) {
   forCells(p.x - rad, p.z - rad, p.x + rad, p.z + rad, (x, z, k) => {
     if (Math.hypot(x, z) > R - 2.5) return;
     const f = smooth(rad, rad * 0.45, Math.hypot(x - p.x, z - p.z)); if (f <= 0) return;
@@ -2496,6 +3175,7 @@ function stampWater(e, p, rad, mode, depth = S.waterDepth) {
     else {
       if (f > WM[k]) editGrid(e, 'WM', k, f - WM[k]);
       if (f > 0.05) { const nv = lerp(WDP[k], depth, f); if (Math.abs(nv - WDP[k]) > 0.001) editGrid(e, 'WDP', k, nv - WDP[k]); }
+      if (f > 0.05) { const nl = lerp(WLP[k], level, f); if (Math.abs(nl - WLP[k]) > 0.001) editGrid(e, 'WLP', k, nl - WLP[k]); }
     }
   });
 }
@@ -2510,10 +3190,11 @@ function blurInto(src, dst, r) {
     for (let j = 0; j < N; j++) { dst[j * N + i] = acc / w; acc += tmp[Math.min(N - 1, j + r + 1) * N + i] - tmp[Math.max(0, j - r) * N + i]; }
   }
 }
-const _wdp = new Float32Array(NN), _wb = new Float32Array(NN), NB4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const _wdp = new Float32Array(NN), _wlp = new Float32Array(NN), _wb = new Float32Array(NN), NB4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 // 每涂一笔都从整张遮罩重新算：挖地形、分出连通的水面、各自定水位、岸外垒土坎、水面网格、岸边装饰
 function rebuildWater(full) {
-  blurInto(WM, _wb, 2); blurInto(_wb, WB, 2); blurInto(WDP, _wdp, 2);
+  const seat = entities.filter(e => e.type === 'rock' && e.x !== undefined).map(e => [e, heightAt(e.x, e.z)]);
+  blurInto(WM, _wb, 2); blurInto(_wb, WB, 2); blurInto(WDP, _wdp, 2); blurInto(WLP, _wlp, 2);
   for (let k = 0; k < NN; k++) {
     const b = WB[k];
     DW[k] = b > 0.01 ? -1.15 * _wdp[k] * smooth(0.22, 0.68, b) * (0.6 + 0.4 * smooth(0.7, 1, b)) : 0;
@@ -2524,11 +3205,13 @@ function rebuildWater(full) {
   let id = 0;
   for (let k0 = 0; k0 < NN; k0++) {
     if (lab[k0] >= 0 || WB[k0] <= 0.4 || EDGE[k0]) continue;
-    let lv = Infinity, lvAll = Infinity; const comp = [];
+    // 水位 = 岸线一圈没挖过的地面里最低的那处，再往下让一点；水位系数越高让得越少，水面越接近地面
+    let lv = Infinity, lvAll = Infinity, lp = 0; const comp = [];
     lab[k0] = id; stack.push(k0);
     while (stack.length) {
       const k = stack.pop(); comp.push(k);
-      if (WB[k] < 0.5) lv = Math.min(lv, H[k]); lvAll = Math.min(lvAll, H[k]);
+      const g = BASE[k] + D[k];
+      if (WB[k] < 0.5) lv = Math.min(lv, g); lvAll = Math.min(lvAll, g); lp += _wlp[k];
       const i = k % N, j = (k - i) / N;
       for (const [di, dj] of NB4) {
         const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
@@ -2536,7 +3219,7 @@ function rebuildWater(full) {
         if (lab[kk] < 0 && WB[kk] > 0.4 && !EDGE[kk]) { lab[kk] = id; stack.push(kk); }
       }
     }
-    const level = (lv < Infinity ? lv : lvAll) - 0.04;
+    const level = (lv < Infinity ? lv : lvAll) - lerp(0.42, 0.05, clamp(lp / comp.length, 0, 1));
     for (const k of comp) WLV[k] = level;
     id++;
   }
@@ -2566,11 +3249,18 @@ function rebuildWater(full) {
   for (let k = 0; k < GN; k++) { GHIDEW[k] = sampleGrid(WB, GX[k], GZ[k]) > 0.3 ? 1 : 0; setGrass(k); }
   markGrass();
   buildWaterMesh();
+  // 摆在水里的岩石跟着池底升降，泡在水里的那圈青草藏起来；水草跟着水位浮动
+  for (const [e, h0] of seat) {
+    e.group.position.y += heightAt(e.x, e.z) - h0;
+    const wet = waterDepthAt(e.x, e.z) > 0.05;
+    for (const c of e.group.children) if (c.material === flowerMat) c.visible = !wet;
+  }
+  for (const e of entities) if (e.type === 'aquatic') seatAquatic(e);
   if (full) buildShore();
 }
 function buildWaterMesh() {
   const pos = new Float32Array(NN * 3), col = new Float32Array(NN * 3), ica = new Float32Array(NN * 4), uv = new Float32Array(NN * 2), nor = new Float32Array(NN * 3), idx = [];
-  const shallow = new THREE.Color(ST.water[0]), deep = new THREE.Color(ST.water[1]), c = new THREE.Color();
+  const wc = waterCols(), shallow = new THREE.Color(wc[0]), deep = new THREE.Color(wc[1]), c = new THREE.Color();
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const k = j * N + i, x = gxy(i), z = gxy(j), lv = WLV[k];
     pos[k * 3] = x; pos[k * 3 + 1] = isNaN(lv) ? -50 : lv; pos[k * 3 + 2] = z; nor[k * 3 + 1] = 1;
@@ -2618,30 +3308,34 @@ function buildShore() {
       });
     }
   };
-  // 只沿最外圈岸线摆石头
+  // 岸石：只沿最外圈岸线摆
   grid(0.7, 1, 0.2, (x, z) => {
     const lv = WLV[cellAt(x, z)]; if (isNaN(lv)) return;
-    const d = lv - heightAt(x, z); if (d < -0.25 || d > 0.12 || Math.random() < 0.1) return;
+    const d = lv - heightAt(x, z); if (d < -0.25 || d > 0.12 || Math.random() > 0.9 * S.shoreRock) return;
     const big = Math.random() < 0.16, sz = big ? rand(0.7, 1.05) : rand(0.32, 0.6);
     addRock(rb, M(x, heightAt(x, z) - sz * 0.12, z, rand(0, 6), rand(-0.1, 0.1), rand(-0.1, 0.1), sz * rand(1, 1.3), sz * rand(0.8, 1.05), sz), big ? 0.85 : 0.5, pick(CHUNKS));
   });
-  // 浅水里的芦苇
-  grid(1.5, 2, 0.4, (x, z) => {
-    const lv = WLV[cellAt(x, z)], d = isNaN(lv) ? -1 : lv - heightAt(x, z); if (d < 0.08 || d > 0.35 || Math.random() > 0.4) return;
-    for (let i = 0; i < 8; i++) {
-      const px = x + rand(-0.35, 0.35), pz = z + rand(-0.35, 0.35), hh = rand(0.6, 1.15), yb = heightAt(px, pz) - 0.1, rx = rand(-0.12, 0.12), rz = rand(-0.12, 0.12);
-      db.add(CYL_LO, jc('#7a9a4c', 0.04), M(px, yb + hh / 2, pz, 0, rx, rz, 0.022, hh, 0.022));
-      if (i % 2 === 0) db.add(CYL, jc('#7a5638', 0.03), M(px - rz * hh, yb + hh, pz + rx * hh, 0, rx, rz, 0.045, 0.2, 0.045));
-      else db.add(PETAL, jc('#6f9a45', 0.04), M(px, yb + 0.05, pz, rand(0, 6), 0, 1.1, hh * 0.7, 1, 0.03));
+  // 水中石：露出水面的大圆石，偶尔两三块挨在一起
+  grid(2.2, 6, 0.8, (x, z) => {
+    if (Math.random() > 0.35 * S.waterRock) return;
+    const lv = waterLevelAt(x, z); if (lv === null || lv - heightAt(x, z) < 0.15) return;
+    const n = Math.random() < 0.3 ? 2 + Math.floor(rand(0, 2)) : 1;
+    for (let i = 0; i < n; i++) {
+      const px = x + (i ? rand(-0.7, 0.7) : 0), pz = z + (i ? rand(-0.7, 0.7) : 0), sz = (i ? rand(0.3, 0.5) : rand(0.5, 0.9));
+      if (waterLevelAt(px, pz) === null) continue;
+      const bottom = heightAt(px, pz), top = lv + rand(0.08, 0.3) * sz / 0.7, sy = Math.max(sz * 0.6, (top - bottom) / 1.4);
+      addRock(rb, M(px, bottom + sy * 0.4, pz, rand(0, 6), rand(-0.1, 0.1), rand(-0.1, 0.1), sz * rand(1, 1.25), sy, sz), 0.75, pick(CHUNKS));
     }
   });
-  // 深水里的睡莲
+  // 自带水草：浅水里的芦苇、深水里的睡莲（和风庭园里一半换成荷花）
+  grid(1.5, 2, 0.4, (x, z) => {
+    const lv = WLV[cellAt(x, z)], d = isNaN(lv) ? -1 : lv - heightAt(x, z); if (d < 0.08 || d > 0.35 || Math.random() > 0.4 * S.autoPlant) return;
+    addReeds(db, x, z, (px, pz) => heightAt(px, pz) - 0.1);
+  });
   grid(1.3, 3, 0.88, (x, z) => {
-    if (Math.random() > 0.3) return;
+    if (Math.random() > 0.3 * S.autoPlant) return;
     const lv = waterLevelAt(x, z); if (lv === null || lv - heightAt(x, z) < 0.2) return;
-    const sz = rand(0.2, 0.32);
-    db.add(LILY, jc('#6f9f4f', 0.04), M(x, lv + 0.02, z, rand(0, 6), 0, 0, sz, 1, sz));
-    if (Math.random() < 0.5) for (let k = 0; k < 6; k++) db.add(PETAL, jc(pick(['#f4b6cc', '#fff4ea']), 0.03), M(x, lv + 0.04, z, k / 6 * Math.PI * 2, 0, 0.7, 0.09, 1, 0.04));
+    if (S.style === 'oriental' && Math.random() < 0.5) addLotus(db, x, lv, z); else addLily(db, x, lv, z);
   });
   // 岸外的蕨类
   grid(1.7, 4, 0.1, (x, z) => {
@@ -2654,7 +3348,7 @@ function buildShore() {
   // 池底卵石
   let n = 0; const peb = F.peb;
   grid(0.3, 5, 0.55, (x, z) => {
-    if (n >= 4000) return;
+    if (n >= 4000 || Math.random() > S.pebble) return;
     const lv = waterLevelAt(x, z); if (lv === null || lv - heightAt(x, z) < 0.03) return;
     const sz = Math.random() < 0.14 ? rand(0.14, 0.24) : rand(0.04, 0.1);
     _m.compose(_p.set(x, heightAt(x, z) + sz * 0.15, z), _q.setFromAxisAngle(UP, rand(0, 6.28)), _s.set(sz * rand(1, 1.45), sz * 0.6, sz));
@@ -2663,8 +3357,113 @@ function buildShore() {
   peb.count = n; peb.instanceMatrix.needsUpdate = true; if (peb.instanceColor) peb.instanceColor.needsUpdate = true;
 }
 function clearWaterNature() {
-  for (const o of entities.slice()) if ((o.type === 'tree' || o.type === 'flower' || o.type === 'rock') && o.x !== undefined && sampleGrid(WB, o.x, o.z) > 0.45) removeEntity(o, true);
+  for (const o of entities.slice()) if ((o.type === 'tree' || o.type === 'flower') && o.x !== undefined && sampleGrid(WB, o.x, o.z) > 0.45) removeEntity(o, true);
 }
+// ================= 水景：睡莲、荷花、浮萍、芦苇、菖蒲 =================
+// 下面的 add* 都以 (x, y, z) 为基点往 Builder 里加零件：岸边自动装饰传世界坐标，水景工具传 (0, 0, 0) 再把整团放到水面上
+const AQUA = [{ v: 'mix', n: '混合' }, { v: 'lily', n: '睡莲' }, { v: 'lotus', n: '荷花' }, { v: 'duckweed', n: '浮萍' }, { v: 'reed', n: '芦苇' }, { v: 'iris', n: '菖蒲' }];
+const LOTUS_LEAF = (() => {
+  const g = new THREE.RingGeometry(0.04, 1, 20, 3); g.rotateX(-Math.PI / 2);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i), r = Math.hypot(x, z), a = Math.atan2(z, x); p.setY(i, 0.22 * r * r + 0.035 * Math.sin(a * 7) * r); }
+  g.computeVertexNormals(); return g;
+})();
+const DUCK = new THREE.CircleGeometry(1, 6).rotateX(-Math.PI / 2);
+const PALE = new THREE.Color('#ffffff');
+function addLily(b, x, y, z, flower = Math.random() < 0.5) {
+  const sz = rand(0.2, 0.34);
+  b.add(LILY, jc(pick(['#6f9f4f', '#5f9445', '#7aa858']), 0.04), M(x, y + 0.015, z, rand(0, 6), rand(-0.03, 0.03), rand(-0.03, 0.03), sz, 1, sz));
+  if (!flower) return;
+  const col = pick(['#f4b6cc', '#fff4ea', '#f7e08a', '#f29bb8']);
+  for (let r = 0; r < 2; r++) for (let k = 0; k < 7; k++) b.add(PETAL, jc(col, 0.03).lerp(PALE, r * 0.25), M(x, y + 0.035 + r * 0.012, z, k / 7 * Math.PI * 2 + r * 0.45, 0, 0.55 + r * 0.45, 0.1 - r * 0.025, 1, 0.045));
+  b.add(ICO, '#f2c84a', M(x, y + 0.05, z, 0, 0, 0, 0.025, 0.02, 0.025));
+}
+function addLilies(b, x, y, z) {
+  const n = 2 + Math.floor(rand(0, 4));
+  for (let i = 0; i < n; i++) { const a = rand(0, 6.28), d = i ? rand(0.25, 0.6) : 0; addLily(b, x + Math.cos(a) * d, y, z + Math.sin(a) * d, Math.random() < 0.4); }
+}
+function addLotus(b, x, y, z) {
+  const nl = 2 + Math.floor(rand(0, 3));
+  for (let i = 0; i < nl; i++) {
+    const a = rand(0, 6.28), d = rand(0.05, 0.4), lx = x + Math.cos(a) * d, lz = z + Math.sin(a) * d, raised = Math.random() < 0.6, h = raised ? rand(0.2, 0.6) : 0.015, s = raised ? rand(0.26, 0.42) : rand(0.22, 0.32);
+    if (raised) b.add(CYL_LO, jc('#6f9a45', 0.04), M(lx, y + (h - 0.5) / 2, lz, 0, 0, 0, 0.013, h + 0.5, 0.013));
+    b.add(LOTUS_LEAF, jc(pick(['#4f8a45', '#5a9650', '#467f3e']), 0.04), M(lx, y + h, lz, rand(0, 6), raised ? rand(-0.25, 0.25) : 0, raised ? rand(-0.25, 0.25) : 0, s, s, s));
+  }
+  const nf = Math.random() < 0.75 ? 1 + Math.floor(rand(0, 2)) : 0;
+  for (let i = 0; i < nf; i++) {
+    const a = rand(0, 6.28), d = rand(0, 0.25), fx = x + Math.cos(a) * d, fz = z + Math.sin(a) * d, h = rand(0.55, 0.95), kind = Math.random();
+    b.add(CYL_LO, jc('#6f9a45', 0.04), M(fx, y + (h - 0.5) / 2, fz, 0, 0, 0, 0.011, h + 0.5, 0.011));
+    if (kind < 0.55) {   // 盛开的荷花：三层花瓣由外向内越来越直立、越来越白
+      for (const [n, len, tilt, off, l] of [[9, 0.17, 0.75, 0, 0], [7, 0.13, 1.15, 0.35, 0.25], [5, 0.09, 1.4, 0.1, 0.45]])
+        for (let k = 0; k < n; k++) b.add(PETAL, jc('#f29bb8', 0.03).lerp(PALE, l), M(fx, y + h, fz, k / n * Math.PI * 2 + off, 0, tilt, len, 1, len * 0.5));
+      b.add(CYL, '#d9cc5a', M(fx, y + h + 0.03, fz, 0, 0, 0, 0.04, 0.035, 0.04));
+    } else if (kind < 0.85) b.add(PEB, jc('#ee8fb0', 0.03), M(fx, y + h + 0.06, fz, 0, 0, 0, 0.055, 0.1, 0.055));   // 花苞
+    else b.add(CONE, '#9aa860', M(fx, y + h + 0.03, fz, 0, Math.PI, 0, 0.07, 0.07, 0.07));                         // 莲蓬
+  }
+}
+function addDuckweed(b, x, y, z) {
+  const n = 50 + Math.floor(rand(0, 40)), r0 = rand(0.5, 0.9);
+  for (let i = 0; i < n; i++) { const a = rand(0, 6.28), r = r0 * Math.pow(Math.random(), 0.7), s = rand(0.025, 0.05); b.add(DUCK, jc(pick(['#7fb04a', '#94c25a', '#6fa040']), 0.04), M(x + Math.cos(a) * r, y + 0.01, z + Math.sin(a) * r, 0, 0, 0, s, 1, s)); }
+}
+// 芦苇：yAt(px, pz) 给出每根茎的根部高度
+function addReeds(b, x, z, yAt, n = 8) {
+  for (let i = 0; i < n; i++) {
+    const px = x + rand(-0.35, 0.35), pz = z + rand(-0.35, 0.35), hh = rand(0.6, 1.15), yb = yAt(px, pz), rx = rand(-0.12, 0.12), rz = rand(-0.12, 0.12);
+    b.add(CYL_LO, jc('#7a9a4c', 0.04), M(px, yb + hh / 2, pz, 0, rx, rz, 0.022, hh, 0.022));
+    if (i % 2 === 0) b.add(CYL, jc('#7a5638', 0.03), M(px - rz * hh, yb + hh, pz + rx * hh, 0, rx, rz, 0.045, 0.2, 0.045));
+    else b.add(PETAL, jc('#6f9a45', 0.04), M(px, yb + 0.05, pz, rand(0, 6), 0, 1.1, hh * 0.7, 1, 0.03));
+  }
+}
+function addIris(b, x, y, z) {
+  const col = pick([['#6a4fc0', '#8f78e0'], ['#f0c840', '#f8de70'], ['#f4f0ff', '#d8d0f8'], ['#4a5ad0', '#7f8ff0']]);
+  const nl = 6 + Math.floor(rand(0, 4));
+  for (let i = 0; i < nl; i++) { const a = rand(0, 6.28), d = rand(0, 0.12); b.add(PETAL, jc('#5f8f45', 0.05), M(x + Math.cos(a) * d, y - 0.15, z + Math.sin(a) * d, a, 0, rand(1.3, 1.5), rand(0.55, 0.85), 1, 0.035)); }
+  const nf = 1 + Math.floor(rand(0, 3));
+  for (let i = 0; i < nf; i++) {
+    const a = rand(0, 6.28), d = rand(0, 0.15), fx = x + Math.cos(a) * d, fz = z + Math.sin(a) * d, h = rand(0.6, 0.85), r0 = rand(0, 6.28);
+    b.add(CYL_LO, jc('#5f8f45', 0.04), M(fx, y - 0.15 + (h + 0.15) / 2, fz, 0, 0, 0, 0.01, h + 0.15, 0.01));
+    for (let k = 0; k < 3; k++) {
+      b.add(PETAL, jc(col[0], 0.03), M(fx, y + h, fz, r0 + k * 2.094, 0, -0.55, 0.12, 1, 0.06));            // 下垂的外瓣
+      b.add(PETAL, jc(col[1], 0.03), M(fx, y + h, fz, r0 + k * 2.094 + 1.047, 0, 1.25, 0.09, 1, 0.045));    // 直立的内瓣
+    }
+  }
+}
+function seatAquatic(e) {
+  const lv = waterLevelAt(e.x, e.z);
+  e.group.visible = lv !== null && (S.season !== 'winter' || e.kind === 'reed');
+  if (lv !== null) e.mesh.position.y = lv;
+}
+function spawnAquatic(x, z, kind, delay = 0) {
+  const lv = waterLevelAt(x, z); if (lv === null) return null;
+  if (kind === 'mix') kind = pick(['lily', 'lily', 'lotus', 'duckweed', 'reed', 'iris']);
+  const e = makeEntity('aquatic'); e.x = x; e.z = z; e.kind = kind;
+  const b = new Builder();
+  if (kind === 'lily') addLilies(b, 0, 0, 0);
+  else if (kind === 'lotus') addLotus(b, 0, 0, 0);
+  else if (kind === 'duckweed') addDuckweed(b, 0, 0, 0);
+  else if (kind === 'reed') addReeds(b, 0, 0, () => -0.35, 6 + Math.floor(rand(0, 5)));
+  else addIris(b, 0, 0, 0);
+  const m = b.mesh(flowerMat, kind !== 'duckweed'); m.position.set(x, lv, z); m.rotation.y = rand(0, 6);
+  e.group.add(m); e.mesh = m;
+  const rad = kind === 'duckweed' ? 0.7 : 0.45;
+  e.dist = (px, pz) => Math.hypot(px - x, pz - z) - rad;
+  seatAquatic(e);
+  pop(m, delay, 0.5, 'leaf');
+  return e;
+}
+function aquaSpawn(p) {
+  for (let t = 0; t < 8; t++) {
+    const a = rand(0, Math.PI * 2), r = Math.sqrt(Math.random()) * 0.8, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+    if (waterLevelAt(x, z) === null || sampleGrid(WB, x, z) < 0.6) continue;
+    if (entities.some(e => e.type === 'aquatic' && Math.hypot(e.x - x, e.z - z) < 0.6)) continue;
+    spawnAquatic(x, z, S.aqua); return;
+  }
+}
+// 水色：默认跟随场景风格；[浅处, 深处, 透光色]
+const WATER_TINTS = [{ v: 'style', n: '默认' }, { v: 'clear', n: '清澈' }, { v: 'jade', n: '碧绿' }, { v: 'blue', n: '湖蓝' }, { v: 'ink', n: '墨色' }];
+const WATER_COLS = { clear: ['#eef8f6', '#8cc4c4', '#b8e0dc'], jade: ['#d8eedc', '#3f8a6a', '#6fae8c'], blue: ['#d8ecfa', '#2f6fb0', '#6fa0d8'], ink: ['#c8d4d4', '#2a4048', '#4a6066'] };
+const waterCols = () => WATER_COLS[S.waterTint] || ST.water;
+function applyWaterTint() { waterMat.attenuationColor.set(waterCols()[2]); buildWaterMesh(); }
 
 // ================= 池塘里的鱼 =================
 const fishMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.15, side: THREE.DoubleSide, envMapIntensity: 0.9 });
@@ -2759,7 +3558,24 @@ function deformRaw(st, p) {
   const dx = p.x - st.p0.x, dz = p.z - st.p0.z, cum = arcLens(st.raw), c0 = cum[st.gi], Rf = Math.max(2.5, Math.min(6, cum[cum.length - 1] * 0.35));
   return st.raw.map((q, i) => { const w = smooth(Rf, 0, Math.abs(cum[i] - c0)); return { x: q.x + dx * w, z: q.z + dz * w }; });
 }
-function rebuildShape(type, raw, roof) { return type === 'wall' ? buildWall(raw, 0, roof) : type === 'fence' ? buildFence(raw) : buildPath(raw); }
+function rebuildShape(type, raw, roof, extra) { return type === 'wall' ? buildWall(raw, 0, roof, extra && extra.gates) : type === 'fence' ? buildFence(raw) : buildPath(raw); }
+// 编辑后原地重建：旧的立刻换成新的，不播动画；记下旧状态，撤销时能换回去
+function rebuildWallGates(old, gates) {
+  const prev = { type: 'wall', raw: old.raw, roof: old.roofHex, gates: old.gates, prev: old.prevState, idx: entities.indexOf(old) };
+  removeEntity(old, true, true);
+  quietBuild = true; let ne; try { ne = buildWall(old.raw, 0, old.roofHex, gates); } finally { quietBuild = false; }
+  if (ne) ne.prevState = prev;
+  return ne;
+}
+function rebuildHouse(old, spec) {
+  if (!old || old.dead) return null;
+  const prev = { type: 'house', spec: old.spec, prev: old.prevState, idx: entities.indexOf(old) };
+  removeEntity(old, true, true);
+  quietBuild = true; let ne; try { ne = buildHouse(spec.a, spec.b, 0, spec.roofHex, spec); } finally { quietBuild = false; }
+  ne.prevState = prev; selHouse = ne;
+  if (S.tool === 'edit') renderOptions();
+  return ne;
+}
 
 // ================= 地形塑形 =================
 function sculptAt(e, p, dt, dir) {
@@ -2868,12 +3684,14 @@ const ICONS = {
   tree: '<path d="M12 21v-6"/><path d="M12 15c-4 0-6-2-6-5a6 6 0 0 1 12 0c0 3-2 5-6 5z"/>',
   flower: '<circle cx="12" cy="8" r="2"/><path d="M12 4.5a2 2 0 0 1 0 1.5M15.5 8a2 2 0 0 1-1.5 0M12 11.5a2 2 0 0 1 0-1.5M8.5 8A2 2 0 0 1 10 8"/><path d="M12 10.5V21M12 17c-2.5 0-4-1.5-4-3 2 0 4 1 4 3zM12 19c2.5 0 4-1.5 4-3-2 0-4 1-4 3z"/>',
   pond: '<path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  aqua: '<path d="M2 18c2.5-1.5 5-1.5 7.5 0s5 1.5 7.5 0 3.5-1 5-1"/><path d="M12 14c-2.5 0-4-1.8-4-4 1.6 0 2.8.6 4 2 1.2-1.4 2.4-2 4-2 0 2.2-1.5 4-4 4z"/><path d="M12 12c-1-1.5-1-3.5 0-5 1 1.5 1 3.5 0 5z"/>',
   terrain: '<path d="M2 19 9 9l4 5 3-3 6 8z"/>',
   rock: '<path d="M3 19.5 5.5 13l4-3.5 5 .5 4 4 2.5 5.5z"/><path d="M9.5 9.5 11 14l4.5-1M11 14l-3 5.5"/>',
   fish: '<path d="M3 12c3-4.5 8.5-5.5 12.5-2L20 6.5v11L15.5 14C11.5 17.5 6 16.5 3 12z"/><circle cx="8" cy="11.2" r=".9"/>',
   sheep: '<path d="M7 15a3 3 0 0 1 0-6 3 3 0 0 1 5-2 3 3 0 0 1 5 2 3 3 0 0 1 0 6z"/><path d="M9 15v4M15 15v4M18 10.5h2.5"/>',
   shape: '<path d="M3 17c4-7 14-7 18 0"/><path d="M12 13V4M9 7l3-3 3 3"/>',
-  eraser: '<path d="M15.5 3.5 20.5 8.5 10 19H5l-2.5-2.5z"/><path d="M9 10l5 5M11 21h10"/>'
+  eraser: '<path d="M15.5 3.5 20.5 8.5 10 19H5l-2.5-2.5z"/><path d="M9 10l5 5M11 21h10"/>',
+  edit: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3M4 20h6"/>'
 };
 function addPt(p, gap) { const s = S.stroke, l = s.pts[s.pts.length - 1]; if (Math.hypot(p.x - l.x, p.z - l.z) >= gap) s.pts.push(p); }
 function houseDims(a, b) {
@@ -2886,9 +3704,8 @@ const TOOLS = [
   { id: 'wall', name: '城墙', r: 0.45, hint: '拖拽画出城墙，两端自动长出塔楼；首尾相接会围成院落；单击放一座独立塔楼。',
     begin(p) { S.stroke.pts = [p]; }, move(p) { addPt(p, 0.35); setRibbon(S.stroke.pts, 0.8); },
     end() { const pts = S.stroke.pts; if (polyLen(pts) < 1.2) buildLoneTower(pts[0]); else buildWall(pts); } },
-  { id: 'house', name: '房屋', r: 0.4, hint: '沿屋脊方向拖拽，拉得越长房子越大，超过 5 米会盖成两层；单击放一座小屋。',
-    begin(p) { S.stroke.a = p; S.stroke.b = p; }, move(p) { S.stroke.b = p; const d = houseDims(S.stroke.a, p); if (d) setRibbon([S.stroke.a, d.end], d.W); },
-    end() { buildHouse(S.stroke.a, S.stroke.b); } },
+  { id: 'house', name: '房屋', r: 0.4, hint: '分三步盖房子：按住地面拖出一条边定长度和朝向 → 左右移动拉出宽度、点一下 → 上下移动拉出墙高、再点一下才盖出来；Esc 随时放弃。盖好后还能拖白色把手微调。',
+    begin(p) { placeStart(p); }, move(p) { placeDrag(p); }, end() { placeEndDrag(); } },
   { id: 'path', name: '小路', r: 0.6, hint: '拖拽铺一条碎石小路，路下的草会自动让开。',
     begin(p) { S.stroke.pts = [p]; }, move(p) { addPt(p, 0.3); setRibbon(S.stroke.pts, 1.2); },
     end() { if (polyLen(S.stroke.pts) > 0.6) buildPath(S.stroke.pts); } },
@@ -2903,24 +3720,34 @@ const TOOLS = [
     begin(p) { S.stroke.acc = 99; S.stroke.timer = 0; this.move(p); },
     move(p) { const s = S.stroke; if (s.last) s.acc += Math.hypot(p.x - s.last.x, p.z - s.last.z); s.last = p; if (s.acc > 0.4) { s.acc = 0; brushSpawn(p, 1.1, 0.5, 'flower'); } },
     frame(dt) { const s = S.stroke; s.timer += dt; if (s.timer > 0.18 && s.last) { s.timer = 0; brushSpawn(s.last, 1.1, 0.5, 'flower'); } } },
-  { id: 'pond', name: '水域', get r() { return S.waterR; }, hint: '像铺路一样涂抹出水面，多涂几笔会连成一片、共用一个水位；石头只沿最外圈岸线摆放。在已有水面上用别的“水深”再涂一遍可以改深浅；选“填平”可以把水擦掉。',
-    begin(p) { S.stroke.e = makeEntity('water'); S.stroke.last = null; S.stroke.t = 0; this.move(p); },
+  { id: 'pond', name: '水域', get r() { return S.waterR; }, hint: '像铺路一样涂抹出水面，多涂几笔会连成一片、共用一个水位。“水位”选高时水面几乎和岸边齐平；在已有水面上换个水深或水位再涂一遍就能改；选“填平”可以把水擦掉；选“泳池”沿长边拖一下，挖一个带池沿、躺椅和遮阳伞的长方形泳池。石头、水草和水色在“水景”里调。',
+    begin(p) { if (S.waterMode === 'pool') { S.stroke.a = p; S.stroke.b = p; return; } S.stroke.e = makeEntity('water'); S.stroke.last = null; S.stroke.t = 0; this.move(p); },
     move(p) {
+      if (S.waterMode === 'pool') { const a = S.stroke.a; S.stroke.b = p; const l = Math.hypot(p.x - a.x, p.z - a.z); if (l > 0.5) setRibbon([a, p], clamp(2.4 + l * 0.12, 2.6, 4.2) + 2); return; }
       const st = S.stroke; if (st.last && Math.hypot(p.x - st.last.x, p.z - st.last.z) < 0.25) return;
       st.last = p; stampWater(st.e, p, S.waterR, S.waterMode); st.dirty = true;
     },
-    frame(dt) { const st = S.stroke; st.t += dt; if (st.dirty && st.t > 0.12) { st.t = 0; st.dirty = false; rebuildWater(false); } },
+    frame(dt) { if (S.waterMode === 'pool') return; const st = S.stroke; st.t += dt; if (st.dirty && st.t > 0.12) { st.t = 0; st.dirty = false; rebuildWater(false); } },
     end() {
+      if (S.waterMode === 'pool') { buildPool(S.stroke.a, S.stroke.b); sfx('water'); return; }
       const e = S.stroke.e;
       if (!Object.keys(e.edits).length) { entities.splice(entities.indexOf(e), 1); scene.remove(e.group); return; }
       rebuildWater(true); clearWaterNature(); sfx('water');
     } },
+  { id: 'aqua', name: '水景', r: 0.8, hint: '在水面上按住刷出睡莲、荷花、浮萍、芦苇或菖蒲；后面几项分别调岸边石头、水中露出的大石、池底卵石、自带水草的多少，以及水的颜色。',
+    begin(p) {
+      S.stroke.acc = 99; S.stroke.timer = 0;
+      if (waterLevelAt(p.x, p.z) === null) { toast('先涂一片水，再在水面上种水草'); return; }
+      this.move(p);
+    },
+    move(p) { const s = S.stroke; if (s.last) s.acc += Math.hypot(p.x - s.last.x, p.z - s.last.z); s.last = p; if (s.acc > 0.6) { s.acc = 0; aquaSpawn(p); } },
+    frame(dt) { const s = S.stroke; s.timer += dt; if (s.timer > 0.25 && s.last) { s.timer = 0; aquaSpawn(s.last); } } },
   { id: 'fish', name: '放鱼', r: 0.35, hint: '在池塘里点一下放进一条鱼，可以选锦鲤、金鱼、鳟鱼或太阳鱼。',
     begin(p) {
       if (waterDepthAt(p.x, p.z) < 0.12) { toast('先涂一片水，再把鱼放进去'); return; }
       spawnFish(p.x, p.z, S.fish);
     } },
-  { id: 'rock', name: '岩石', r: 0.9, hint: '单击或拖拽摆放长着青苔的大石头，旁边会散落几块小石子。',
+  { id: 'rock', name: '岩石', r: 0.9, hint: '单击或拖拽摆放长着青苔的大石头，旁边会散落几块小石子；也可以摆进池塘里。',
     begin(p) { S.stroke.acc = 99; S.stroke.last = null; this.move(p); },
     move(p) { const s = S.stroke; if (s.last) s.acc += Math.hypot(p.x - s.last.x, p.z - s.last.z); s.last = p; if (s.acc > 1.8) { s.acc = 0; brushSpawn(p, 0.4, 1.7, 'rock'); } } },
   { id: 'terrain', name: '地形', r: 2.6, hint: '按住抬高地面，选“降低”可以把地面压低。地形改动只能用撤销恢复。',
@@ -2946,11 +3773,13 @@ const TOOLS = [
     },
     end() {
       const st = S.stroke; if (!st.target || !st.cur || Math.hypot(st.pEnd.x - st.p0.x, st.pEnd.z - st.p0.z) < 0.15) return;
-      const old = st.target, prev = { type: old.type, raw: old.raw, roof: old.roofHex, prev: old.prevState };
+      const old = st.target, prev = { type: old.type, raw: old.raw, roof: old.roofHex, gates: old.gates, prev: old.prevState, idx: entities.indexOf(old) };
       removeEntity(old, true);
-      const ne = rebuildShape(old.type, st.cur, old.roofHex);
+      const ne = rebuildShape(old.type, st.cur, old.roofHex, old);
       if (ne) ne.prevState = prev;
     } },
+  { id: 'edit', name: '修改', r: 0.3, hint: '点房子选中它：拖白色把手改长宽高和屋檐；选好“开窗 / 开门 / 拆除”再点墙面，就在那里开或拆；还能换墙色和屋顶。点城墙可以开一道门洞，再点一次封上。',
+    begin(p) { editClick(p); } },
   { id: 'eraser', name: '擦除', r: 0.9, hint: '在物体上拖过就能移除它；地形改动请用撤销。',
     begin(p) { eraseAt(p); }, move(p) { eraseAt(p); } }
 ];
@@ -2959,7 +3788,7 @@ const TOOL = Object.fromEntries(TOOLS.map(t => [t.id, t]));
 function brushSpawn(p, radius, minGap, kind) {
   for (let t = 0; t < 8; t++) {
     const a = rand(0, Math.PI * 2), r = Math.sqrt(Math.random()) * radius, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
-    if (Math.hypot(x, z) > R - 1 || sampleGrid(WB, x, z) > 0.3) continue;
+    if (Math.hypot(x, z) > R - 1 || (kind !== 'rock' && sampleGrid(WB, x, z) > 0.3)) continue;
     let ok = true;
     for (const e of entities) {
       if (e.type === kind && Math.hypot(e.x - x, e.z - z) < minGap) { ok = false; break; }
@@ -3000,6 +3829,215 @@ function pickGround(ev) {
   return null;
 }
 
+// ================= 房屋把手：拖动改长、宽、高和屋檐；修改工具 =================
+let selHouse = null, hDrag = null, lastEv = null;
+const HANDLE_IDS = ['endA', 'endB', 'width', 'height', 'eave'];
+const handleGeo = new THREE.SphereGeometry(0.2, 16, 10);
+const handles = Object.fromEntries(HANDLE_IDS.map(id => {
+  const m = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({ color: id === 'height' ? '#ffe9a8' : id === 'eave' ? '#cfe3ff' : '#ffffff', depthTest: false, transparent: true, opacity: 0.95 }));
+  m.renderOrder = 30; m.visible = false; scene.add(m); return [id, m];
+}));
+// 拖动时先显示半透明的轮廓，松手才真正重盖
+const ghost = new THREE.Group(), ghostBody = new THREE.Mesh(BOX, previewMat), ghostRoof = new THREE.Mesh(new THREE.BufferGeometry(), previewMat);
+ghost.add(ghostBody, ghostRoof); ghost.visible = false; scene.add(ghost);
+function hFrame(sp) { const dx = sp.b.x - sp.a.x, dz = sp.b.z - sp.a.z, L = Math.hypot(dx, dz) || 1; return { L, ux: dx / L, uz: dz / L, nx: -dz / L, nz: dx / L, cx: (sp.a.x + sp.b.x) / 2, cz: (sp.a.z + sp.b.z) / 2 }; }
+const hYB = e => e.y0 + (e.doorY ?? 0.45);   // 墙脚（台基顶面）的高度
+function placeHandles() {
+  const e = selHouse, show = !!e && !e.dead && !!e.spec && (S.tool === 'house' || S.tool === 'edit');
+  for (const id of HANDLE_IDS) handles[id].visible = show;
+  if (!show) return;
+  const sp = hDrag ? hDrag.spec : e.spec, f = hFrame(sp), yb = hYB(e), half = sp.W / 2, rh = sp.W * (e.pitchK || 0.5);
+  handles.endA.position.set(sp.a.x, heightAt(sp.a.x, sp.a.z) + 0.4, sp.a.z);
+  handles.endB.position.set(sp.b.x, heightAt(sp.b.x, sp.b.z) + 0.4, sp.b.z);
+  handles.width.position.set(f.cx + f.nx * (half + 0.05), yb + sp.H * 0.5, f.cz + f.nz * (half + 0.05));
+  handles.eave.position.set(f.cx - f.nx * (half + sp.eave), yb + sp.H + 0.05, f.cz - f.nz * (half + sp.eave));
+  handles.height.position.set(f.cx, yb + sp.H + rh + 0.55, f.cz);
+  const s = clamp(camera.position.distanceTo(handles.height.position) / 30, 0.6, 2.2);
+  for (const id of HANDLE_IDS) handles[id].scale.setScalar(s * (hDrag && hDrag.id === id ? 1.3 : 1));
+}
+function pickHandle(ev) {
+  if (!handles.endA.visible) return null;
+  const rc = canvas.getBoundingClientRect(); let best = null, bd = 18;
+  for (const id of HANDLE_IDS) {
+    _p.copy(handles[id].position).project(camera);
+    const d = Math.hypot((_p.x + 1) / 2 * rc.width + rc.left - ev.clientX, (1 - _p.y) / 2 * rc.height + rc.top - ev.clientY);
+    if (d < bd) { bd = d; best = id; }
+  }
+  return best;
+}
+function updateGhost(sp, e) {
+  const f = hFrame(sp), half = sp.W / 2, rh = sp.W * (e.pitchK || 0.5), yb = hYB(e), base = yb - e.y0;
+  ghost.visible = true; ghost.position.set(f.cx, yb, f.cz); ghost.rotation.y = yaw(f.ux, f.uz);
+  ghostBody.scale.set(f.L, sp.H + base, sp.W); ghostBody.position.y = (sp.H - base) / 2;
+  ghostRoof.geometry.dispose();
+  const ho = half + sp.eave, drop = sp.eave * rh / half, dep = f.L + 2 * (0.15 + sp.eave * 0.45);
+  const g = new THREE.ExtrudeGeometry(new THREE.Shape([new THREE.Vector2(-ho, -drop), new THREE.Vector2(ho, -drop), new THREE.Vector2(0, rh)]), { depth: dep, bevelEnabled: false });
+  g.translate(0, 0, -dep / 2); g.rotateY(Math.PI / 2);
+  ghostRoof.geometry = g; ghostRoof.position.y = sp.H;
+}
+function dragHandle(ev) {
+  const d = hDrag, sp = d.spec, e = selHouse, f = hFrame(e.spec), yb = hYB(e);
+  if (d.id === 'height') {
+    // 高度：在过房子中心、正对镜头的竖直平面上取鼠标的高度
+    const rc = canvas.getBoundingClientRect();
+    ndc.set((ev.clientX - rc.left) / rc.width * 2 - 1, -((ev.clientY - rc.top) / rc.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const n = camera.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+    const hit = raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, new THREE.Vector3(f.cx, yb, f.cz)), new THREE.Vector3());
+    if (!hit) return;
+    sp.H = clamp(hit.y - yb - sp.W * (e.pitchK || 0.5) - 0.55, 1.3, 5.2);
+  } else {
+    const p = pickGround(ev); if (!p) return;
+    if (d.id === 'endA' || d.id === 'endB') {
+      const other = d.id === 'endA' ? sp.b : sp.a; let vx = p.x - other.x, vz = p.z - other.z; const l = Math.hypot(vx, vz);
+      if (l < 0.01) return;
+      const L = clamp(l, 2.4, 12); vx /= l; vz /= l;
+      const np = { x: other.x + vx * L, z: other.z + vz * L };
+      if (d.id === 'endA') sp.a = np; else sp.b = np;
+    } else {
+      const dist = Math.abs((p.x - f.cx) * f.nx + (p.z - f.cz) * f.nz);
+      if (d.id === 'width') sp.W = clamp(dist * 2, 2, 6.5); else sp.eave = clamp(dist - sp.W / 2, 0.05, 1.5);
+    }
+  }
+  updateGhost(sp, e); placeHandles();
+  const L = Math.hypot(sp.b.x - sp.a.x, sp.b.z - sp.a.z);
+  toast(`长 ${L.toFixed(1)} · 宽 ${sp.W.toFixed(1)} · 墙高 ${sp.H.toFixed(1)} · 出檐 ${sp.eave.toFixed(2)} 米`);
+}
+// 修改工具：点房子选中 / 在选中的房子墙面上开窗、开门、拆门窗；点城墙开门洞或封上
+const WALL_COLS = [{ name: '奶油', hex: '#f3ead8' }, { name: '杏桃', hex: '#f2d6c0' }, { name: '薄荷', hex: '#dceadf' }, { name: '天蓝', hex: '#d6e2f0' }, { name: '鹅黄', hex: '#f2e3a8' }, { name: '藕粉', hex: '#ecd2dc' }, { name: '石灰', hex: '#cfc8bc' }, { name: '砖红', hex: '#c98a72' }];
+// 射线（pickGround 刚按这次点击设好）直接碰房子和城墙的模型，取最近的那个
+function pickBuilt() {
+  const list = entities.filter(e => (e.type === 'house' || e.type === 'wall') && !e.dead), groups = list.map(e => e.group);
+  const hit = raycaster.intersectObjects(groups, true)[0]; if (!hit) return null;
+  let o = hit.object; while (o && !groups.includes(o)) o = o.parent;
+  return o ? { e: list[groups.indexOf(o)], point: hit.point } : null;
+}
+function editClick(p) {
+  const hh = pickBuilt();
+  let wall = null;
+  if (hh && hh.e.type === 'house') return editHouse(hh.e, hh.point);
+  if (hh && hh.e.type === 'wall') { wall = hh.e; p = { x: hh.point.x, z: hh.point.z }; }
+  else for (const e of entities) if (e.type === 'wall' && !e.dead && e.pts && distPoly(p.x, p.z, e.pts) < 1.1) wall = e;
+  if (wall) {
+    const gates = (wall.gates || []).map(g => ({ x: g.x, z: g.z, t: g.t })), near = gates.findIndex(g => Math.hypot(g.x - p.x, g.z - p.z) < 2.2);
+    if (near >= 0) gates.splice(near, 1); else gates.push({ x: p.x, z: p.z, t: false });
+    const n0 = gates.length, ne = rebuildWallGates(wall, gates);
+    sfx('stone');
+    toast(near >= 0 ? '门洞封上了' : ne && ne.gates.length >= n0 ? '开了一道门洞' : '离墙头或别的门洞太近，这里开不了');
+    return;
+  }
+  if (selHouse) { selHouse = null; renderOptions(); }
+}
+function editHouse(e, point) {
+  if (selHouse !== e) { selHouse = e; renderOptions(); toast('选中了：拖白色把手改尺寸，点墙面开门开窗'); return; }
+  const sp = e.spec, L = Math.hypot(sp.b.x - sp.a.x, sp.b.z - sp.a.z), half = sp.W / 2, loc = e.root.worldToLocal(point.clone()), yb = e.doorY ?? 0.45;
+  let f, u;
+  if (Math.abs(loc.z) - half > Math.abs(loc.x) - L / 2) { f = loc.z > 0 ? '+z' : '-z'; u = f === '+z' ? loc.x : -loc.x; }
+  else { f = loc.x > 0 ? '+x' : '-x'; u = f === '+x' ? -loc.z : loc.z; }
+  if (loc.y > yb + sp.H + 0.05 || loc.y < yb - 0.2) { toast('点在墙面上才能开门窗'); return; }
+  const along = (f[1] === 'z' ? L : sp.W) / 2 - 0.45; if (along < 0) { toast('这面墙太窄了'); return; }
+  u = clamp(u, -along, along);
+  const s = clamp(Math.floor((loc.y - yb) / e.sh), 0, e.storeys - 1), ns = JSON.parse(JSON.stringify(sp));
+  ns.custom = true;
+  if (S.editMode === 'del') {
+    let bi = -1, bd = 0.8;
+    ns.open.forEach((o, i) => { if (o.f === f && (o.k === 'door' ? s === 0 : o.s === s) && Math.abs(o.u - u) < bd) { bd = Math.abs(o.u - u); bi = i; } });
+    if (bi < 0) { toast('这里没有门窗'); return; }
+    ns.open.splice(bi, 1);
+  } else {
+    const door = S.editMode === 'door', ss = door ? 0 : s;
+    ns.open = ns.open.filter(o => !(o.f === f && (ss === 0 || o.k !== 'door') && (o.k === 'door' ? ss === 0 : o.s === ss) && Math.abs(o.u - u) < (door || o.k === 'door' ? 0.95 : 0.75)));
+    ns.open.push({ f, u, s: ss, k: door ? 'door' : 'win', box: Math.random() < 0.5 });
+  }
+  rebuildHouse(e, ns); sfx('wood');
+}
+function swatchGroup(label, list, cur, onPick) {
+  const g = document.createElement('div'); g.className = 'grp'; g.innerHTML = `<span>${label}</span>`;
+  for (const r of list) {
+    const sw = document.createElement('button'); sw.type = 'button'; sw.className = 'sw' + (r.hex === cur ? ' on' : '');
+    sw.style.background = r.hex; sw.title = r.name; sw.setAttribute('aria-label', label + '：' + r.name);
+    sw.addEventListener('click', () => { onPick(r.hex); renderOptions(); });
+    g.appendChild(sw);
+  }
+  return g;
+}
+
+// ================= 盖房子：三步定长、宽、高 =================
+// 第 1 步按住拖出房子的一条边（长度和朝向），第 2 步左右移动拉出宽度、点一下，第 3 步上下移动拉出墙高、再点一下才盖；Esc 随时放弃
+let place = null;
+function styleFrame() {
+  const b = ST.build;
+  if (b === 'villa') return { doorY: 0.25, pitchK: 0.05, eave: 0.5, defH: L => L >= 4.5 ? 3.4 : 1.8 };
+  if (b === 'scifi') return { doorY: 0.3, pitchK: 0.06, eave: 0.1, defH: L => L >= 5 ? 2.6 : 2.0 };
+  if (b === 'oriental') return { doorY: 0.55, pitchK: 0.48, eave: 0.8, defH: L => L >= 5 ? 2.3 : 1.9 };
+  return { doorY: 0.45, pitchK: ST.pitch, eave: 0.34, defH: L => (L >= 5 ? 2 : 1) * 1.7 };
+}
+// a→b 是房子的一条边，房子往 side 那一侧伸出 W；换算成 buildHouse 用的屋脊（边往里挪半个宽度）
+function placeSpec() {
+  const P = place, dx = P.b.x - P.a.x, dz = P.b.z - P.a.z, L = Math.hypot(dx, dz) || 1, nx = -dz / L, nz = dx / L, off = P.side * P.W / 2;
+  return { a: { x: P.a.x + nx * off, z: P.a.z + nz * off }, b: { x: P.b.x + nx * off, z: P.b.z + nz * off }, W: P.W, H: P.H, eave: P.fr.eave };
+}
+function placeFrameObj(sp) {
+  let y0 = Infinity; const f = hFrame(sp);
+  for (const [s1, s2] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) y0 = Math.min(y0, heightAt(f.cx + f.ux * s1 * f.L / 2 + f.nx * s2 * sp.W / 2, f.cz + f.uz * s1 * f.L / 2 + f.nz * s2 * sp.W / 2));
+  return { y0, doorY: place.fr.doorY, pitchK: place.fr.pitchK };
+}
+function placePreview() {
+  const sp = placeSpec(); updateGhost(sp, placeFrameObj(sp));
+  const L = Math.hypot(place.b.x - place.a.x, place.b.z - place.a.z);
+  toast(`长 ${L.toFixed(1)} · 宽 ${place.W.toFixed(1)} · 墙高 ${place.H.toFixed(1)} 米`);
+}
+function placeStart(p) {
+  const fr = styleFrame();
+  place = { step: 1, a: p, b: { x: p.x + 0.01, z: p.z }, side: 1, W: 3.0, H: fr.defH(3.4), fr, setH: false, setW: false };
+  renderOptions();
+}
+function placeDrag(p) {
+  if (!place || place.step !== 1) return;
+  place.b = p;
+  const L = Math.hypot(p.x - place.a.x, p.z - place.a.z);
+  if (L < 0.5) return;
+  if (L > 12) { place.b = { x: place.a.x + (p.x - place.a.x) / L * 12, z: place.a.z + (p.z - place.a.z) / L * 12 }; }
+  place.W = clamp(2.3 + Math.min(L, 12) * 0.18, 2.5, 3.8); place.H = place.fr.defH(Math.min(L, 12));
+  placePreview();
+}
+function placeEndDrag() {
+  if (!place || place.step !== 1) return;
+  let L = Math.hypot(place.b.x - place.a.x, place.b.z - place.a.z);
+  if (L < 0.5) {   // 单击：沿屏幕横向放一条默认 3.4 米的边
+    const v = new THREE.Vector3(); camera.getWorldDirection(v);
+    let dx = -v.z, dz = v.x; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l; L = 3.4;
+    place.a = { x: place.a.x - dx * L / 2, z: place.a.z - dz * L / 2 }; place.b = { x: place.a.x + dx * L, z: place.a.z + dz * L };
+  } else if (L < 2.4) {
+    const k = 2.4 / L; place.b = { x: place.a.x + (place.b.x - place.a.x) * k, z: place.a.z + (place.b.z - place.a.z) * k };
+  }
+  place.step = 2; renderOptions(); placePreview();
+}
+function placeMove(ev) {
+  if (place.step === 2) {
+    const p = pickGround(ev); if (!p) return;
+    const dx = place.b.x - place.a.x, dz = place.b.z - place.a.z, L = Math.hypot(dx, dz) || 1, d = ((p.x - place.a.x) * -dz + (p.z - place.a.z) * dx) / L;
+    place.side = d >= 0 ? 1 : -1; place.W = clamp(Math.abs(d), 2, 6.5);
+  } else {
+    // 墙高：在过房子中心、正对镜头的竖直平面上取鼠标的高度，预览的墙顶跟着鼠标走
+    const sp = placeSpec(), f = hFrame(sp), fo = placeFrameObj(sp), rc = canvas.getBoundingClientRect();
+    ndc.set((ev.clientX - rc.left) / rc.width * 2 - 1, -((ev.clientY - rc.top) / rc.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const n = camera.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+    const hit = raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, new THREE.Vector3(f.cx, fo.y0, f.cz)), new THREE.Vector3());
+    if (!hit) return;
+    place.H = clamp(hit.y - fo.y0 - fo.doorY, 1.3, 5.2);
+  }
+  placePreview();
+}
+function placeCommit() {
+  const sp = placeSpec(); place = null; ghost.visible = false;
+  const e = buildHouse(sp.a, sp.b, 0, S.roof, { W: sp.W, H: sp.H });
+  if (e) selHouse = e;
+  renderOptions();
+}
+function placeCancel() { place = null; ghost.visible = false; renderOptions(); toast('取消了这座房子'); }
+
 // ================= 输入 =================
 const pointers = new Set();
 function cancelStroke() { if (S.stroke) { const t = TOOL[S.stroke.tool]; if (t.end && S.stroke.tool === 'terrain') t.end(); } S.stroke = null; preview.visible = false; }
@@ -3009,7 +4047,16 @@ canvas.addEventListener('pointerdown', ev => {
     pointers.add(ev.pointerId);
     if (pointers.size > 1) { cancelStroke(); return; }
   }
-  if (ev.button !== 0) return;
+  if (ev.button !== 0 || !S.tool) return;
+  lastEv = ev;
+  if (S.tool === 'house' && place && place.step >= 2) {
+    if (place.step === 2) { place.step = 3; renderOptions(); placeMove(ev); } else placeCommit();
+    return;
+  }
+  if ((S.tool === 'house' && !place) || S.tool === 'edit') {
+    const hid = pickHandle(ev);
+    if (hid) { hDrag = { id: hid, spec: JSON.parse(JSON.stringify(selHouse.spec)) }; return; }
+  }
   const p = pickGround(ev); if (!p) return;
   S.stroke = { tool: S.tool };
   const t = TOOL[S.tool];
@@ -3017,20 +4064,28 @@ canvas.addEventListener('pointerdown', ev => {
   t.move && t.id !== 'tree' && t.id !== 'flower' && t.id !== 'eraser' && t.move(p);
 });
 canvas.addEventListener('pointermove', ev => {
+  if (hDrag) { dragHandle(ev); return; }
+  if (place && place.step >= 2 && !(ev.buttons & 6)) { cursor.visible = false; placeMove(ev); return; }
+  if (S.tool === 'house' || S.tool === 'edit') canvas.style.cursor = !S.stroke && !place && pickHandle(ev) ? 'grab' : '';
   const p = pickGround(ev);
-  if (p && !(ev.buttons & 2) && !(ev.buttons & 4)) {
+  if (p && S.tool && !(ev.buttons & 2) && !(ev.buttons & 4)) {
     cursor.visible = true; cursor.position.set(p.x, heightAt(p.x, p.z) + 0.08, p.z); cursor.scale.setScalar(TOOL[S.tool].r);
   } else cursor.visible = false;
   if (S.stroke && p) { const t = TOOL[S.stroke.tool]; t.move && t.move(p); }
 });
 function endPointer(ev) {
   pointers.delete(ev.pointerId);
+  if (hDrag) {
+    const d = hDrag; hDrag = null; ghost.visible = false;
+    if (selHouse && !selHouse.dead && JSON.stringify(d.spec) !== JSON.stringify(selHouse.spec)) { rebuildHouse(selHouse, d.spec); sfx('wood'); }
+    return;
+  }
   if (!S.stroke) return;
   const t = TOOL[S.stroke.tool];
   try { t.end && t.end(); } finally { S.stroke = null; preview.visible = false; }
 }
 canvas.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', ev => { pointers.delete(ev.pointerId); cancelStroke(); });
+canvas.addEventListener('pointercancel', ev => { pointers.delete(ev.pointerId); hDrag = null; ghost.visible = false; cancelStroke(); });
 canvas.addEventListener('pointerleave', () => { cursor.visible = false; });
 
 // ================= UI =================
@@ -3039,7 +4094,7 @@ TOOLS.forEach((t, i) => {
   const b = document.createElement('button');
   b.className = 'tool'; b.id = 'tool-' + t.id; b.type = 'button'; b.setAttribute('aria-label', t.name);
   b.innerHTML = `<kbd>${'1234567890-='[i] || ''}</kbd><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[t.id]}</svg><span>${t.name}</span>`;
-  b.addEventListener('click', () => setTool(t.id));
+  b.addEventListener('click', () => setTool(S.tool === t.id ? null : t.id));
   toolsEl.appendChild(b);
 });
 function chipGroup(label, items, cur, onPick) {
@@ -3055,7 +4110,13 @@ function chipGroup(label, items, cur, onPick) {
 function renderOptions() {
   const t = TOOL[S.tool];
   optEl.innerHTML = '';
-  const h = document.createElement('div'); h.className = 'hint'; h.textContent = t.hint; optEl.appendChild(h);
+  const h = document.createElement('div'); h.className = 'hint';
+  h.textContent = !t ? '现在没有选中工具：左键拖动可以转视角。点下方的工具（或按数字键）开始建造；再点一次同一个工具、或按 Esc 就退出。'
+    : S.tool === 'house' && place ? ['', '第 1 步：按住地面拖出房子的一条边，定下长度和朝向（单击用默认长度）。',
+      '第 2 步：左右移动鼠标拉出宽度，点一下确认。Esc 放弃。', '第 3 步：上下移动鼠标拉出墙高（越高层数越多），点一下就盖出来。Esc 放弃。'][place.step]
+    : t.hint;
+  optEl.appendChild(h);
+  if (!t) return;
   if (S.tool === 'wall' || S.tool === 'house') {
     const g = document.createElement('div'); g.className = 'grp'; g.innerHTML = '<span>屋顶</span>';
     for (const r of ROOFS) {
@@ -3068,17 +4129,45 @@ function renderOptions() {
   }
   if (S.tool === 'tree') optEl.appendChild(chipGroup('树种', [{ n: '混合', v: 'mix' }, ...ST.trees.map(v => ({ n: SPECIES[v].name, v }))], S.tree, v => S.tree = v));
   if (S.tool === 'pond') {
-    optEl.appendChild(chipGroup('方式', [{ n: '挖水', v: 'add' }, { n: '填平', v: 'fill' }], S.waterMode, v => S.waterMode = v));
+    optEl.appendChild(chipGroup('方式', [{ n: '挖水', v: 'add' }, { n: '填平', v: 'fill' }, { n: '泳池', v: 'pool' }], S.waterMode, v => S.waterMode = v));
     optEl.appendChild(chipGroup('水深', [{ n: '浅', v: 0.5 }, { n: '中', v: 1.0 }, { n: '深', v: 1.8 }], S.waterDepth, v => S.waterDepth = v));
+    optEl.appendChild(chipGroup('水位', [{ n: '低', v: 0 }, { n: '中', v: 0.5 }, { n: '高', v: 1 }], S.waterLevel, v => S.waterLevel = v));
     optEl.appendChild(chipGroup('笔刷', [{ n: '小', v: 1.0 }, { n: '中', v: 1.7 }, { n: '大', v: 2.6 }], S.waterR, v => S.waterR = v));
+  }
+  if (S.tool === 'aqua') {
+    const amt = [{ n: '无', v: 0 }, { n: '少', v: 0.5 }, { n: '多', v: 1 }];
+    optEl.appendChild(chipGroup('种类', AQUA, S.aqua, v => S.aqua = v));
+    optEl.appendChild(chipGroup('岸石', amt, S.shoreRock, v => { S.shoreRock = v; buildShore(); }));
+    optEl.appendChild(chipGroup('水中石', amt, S.waterRock, v => { S.waterRock = v; buildShore(); }));
+    optEl.appendChild(chipGroup('卵石', amt, S.pebble, v => { S.pebble = v; buildShore(); }));
+    optEl.appendChild(chipGroup('自带水草', amt, S.autoPlant, v => { S.autoPlant = v; buildShore(); }));
+    optEl.appendChild(chipGroup('水色', WATER_TINTS, S.waterTint, v => { S.waterTint = v; applyWaterTint(); }));
+  }
+  if (S.tool === 'edit' && selHouse && !selHouse.dead && selHouse.spec) {
+    // 按钮点下时再取当前选中的房子：每次修改都会换成一栋新的
+    const e = selHouse, edit = o => rebuildHouse(selHouse, { ...JSON.parse(JSON.stringify(selHouse.spec)), ...o });
+    optEl.appendChild(chipGroup('点墙面', [{ n: '开窗', v: 'win' }, { n: '开门', v: 'door' }, { n: '拆除门窗', v: 'del' }], S.editMode, v => S.editMode = v));
+    optEl.appendChild(swatchGroup('墙色', WALL_COLS, e.spec.wallCol, hex => edit({ wallCol: hex })));
+    optEl.appendChild(swatchGroup('屋顶', ROOFS, e.spec.roofHex, hex => edit({ roofHex: hex })));
+    if (e.spec.custom && !(ST.build === 'scifi' || ST.build === 'oriental' || ST.build === 'villa')) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = '门窗恢复默认';
+      b.addEventListener('click', () => { edit({ custom: false }); renderOptions(); });
+      optEl.appendChild(b);
+    }
   }
   if (S.tool === 'fish') optEl.appendChild(chipGroup('鱼种', [{ n: '随机', v: 'mix' }, ...Object.entries(FISH).map(([v, sp]) => ({ n: sp.name, v }))], S.fish, v => S.fish = v));
   if (S.tool === 'flower') optEl.appendChild(chipGroup('花种', FLOWER_MODES, S.flower, v => S.flower = v));
   if (S.tool === 'terrain') optEl.appendChild(chipGroup('方式', [{ n: '抬高', v: 1 }, { n: '降低', v: -1 }], S.sculpt, v => S.sculpt = v));
 }
+// id 为 null：不选工具，只看——左键拖动改成转视角
 function setTool(id) {
+  if (place && id !== 'house') { place = null; ghost.visible = false; }
+  if (S.stroke && id !== S.tool) cancelStroke();
   S.tool = id;
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('on', b.id === 'tool-' + id));
+  controls.mouseButtons.LEFT = id ? -1 : THREE.MOUSE.ROTATE;
+  controls.touches.ONE = id ? -1 : THREE.TOUCH.ROTATE;
+  if (!id) cursor.visible = false;
   renderOptions();
 }
 let toastTimer = 0;
@@ -3086,8 +4175,16 @@ function toast(msg) { toastEl.textContent = msg; toastEl.classList.add('show'); 
 function undo() {
   const e = entities[entities.length - 1];
   if (!e) { toast('没有可以撤销的了'); return; }
-  removeEntity(e); toast('撤销了' + (TYPE_NAME[e.type] || ''));
-  if (e.prevState) { const ps = e.prevState, ne = rebuildShape(ps.type, ps.raw, ps.roof); if (ne && ps.prev) ne.prevState = ps.prev; }
+  removeEntity(e, false, !!e.prevState); toast('撤销了' + (TYPE_NAME[e.type] || ''));
+  if (e.prevState) {
+    const ps = e.prevState;
+    quietBuild = true; let ne;
+    try { ne = ps.type === 'house' ? buildHouse(ps.spec.a, ps.spec.b, 0, ps.spec.roofHex, ps.spec) : rebuildShape(ps.type, ps.raw, ps.roof, ps); } finally { quietBuild = false; }
+    if (ne && ps.prev) ne.prevState = ps.prev;
+    // 换回来的旧版本放回它原来在列表里的位置，免得下一次撤销又把它删掉
+    if (ne && ps.idx !== undefined) { entities.splice(entities.indexOf(ne), 1); entities.splice(Math.min(ps.idx, entities.length), 0, ne); }
+    if (ps.type === 'house') selHouse = ne;
+  }
 }
 document.getElementById('undo').addEventListener('click', undo);
 const clearBtn = document.getElementById('clear'); let clearArm = 0;
@@ -3107,7 +4204,8 @@ const musicBtn = document.getElementById('musicBtn');
 musicBtn.addEventListener('click', () => { ensureAudio(); MUSIC.on = !MUSIC.on; musicBtn.textContent = MUSIC.on ? '音乐：开' : '音乐：关'; });
 window.addEventListener('keydown', ev => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); undo(); return; }
-  if (ev.key === 'Escape') { cancelStroke(); return; }
+  // Esc：先放弃正在盖的房子 / 正在画的这一笔，没有的话就退出当前工具
+  if (ev.key === 'Escape') { if (place) placeCancel(); else if (S.stroke) cancelStroke(); else if (S.tool) setTool(null); return; }
   if (ev.target.tagName === 'INPUT') return;
   const n = '1234567890-='.indexOf(ev.key);
   if (n >= 0 && TOOLS[n]) setTool(TOOLS[n].id);
@@ -3164,12 +4262,15 @@ const snowFx = (() => {
 })();
 function updateRain(dt) {
   rain.mesh.visible = WX.rain > 0.01; if (!rain.mesh.visible) return;
-  const t = controls.target, n = Math.floor(rain.N * WX.rain), wind = 2.5;
+  // 雨丝顺着风斜着落下，风越大越斜
+  const t = controls.target, n = Math.floor(rain.N * WX.rain), wv = 0.5 + WIND.k * 2.2, wx = WIND.x * wv, wz = WIND.z * wv;
   for (let i = 0; i < n; i++) {
-    const j = i * 3; rain.d[j + 1] -= 20 * dt; rain.d[j] += wind * dt * 0.3;
+    const j = i * 3; rain.d[j + 1] -= 20 * dt; rain.d[j] += wx * dt; rain.d[j + 2] += wz * dt;
+    if (rain.d[j] > 20) rain.d[j] -= 40; else if (rain.d[j] < -20) rain.d[j] += 40;
+    if (rain.d[j + 2] > 20) rain.d[j + 2] -= 40; else if (rain.d[j + 2] < -20) rain.d[j + 2] += 40;
     if (rain.d[j + 1] < -2) { rain.d[j + 1] += 24; rain.d[j] = rand(-20, 20); rain.d[j + 2] = rand(-20, 20); }
     const x = t.x + rain.d[j], y = rain.d[j + 1], z = t.z + rain.d[j + 2], k = i * 6;
-    rain.pos[k] = x; rain.pos[k + 1] = y; rain.pos[k + 2] = z; rain.pos[k + 3] = x - wind * 0.03; rain.pos[k + 4] = y + 0.5; rain.pos[k + 5] = z;
+    rain.pos[k] = x; rain.pos[k + 1] = y; rain.pos[k + 2] = z; rain.pos[k + 3] = x - wx * 0.025; rain.pos[k + 4] = y + 0.5; rain.pos[k + 5] = z - wz * 0.025;
   }
   rain.g.setDrawRange(0, n * 2); rain.g.attributes.position.needsUpdate = true;
 }
@@ -3177,7 +4278,9 @@ function updateSnowFx(dt) {
   snowFx.mesh.visible = WX.snow > 0.01; if (!snowFx.mesh.visible) return;
   const t = controls.target, n = Math.floor(snowFx.N * WX.snow), d = snowFx.d;
   for (let i = 0; i < n; i++) {
-    const j = i * 4; d[j + 1] -= 1.1 * dt; d[j] += Math.sin(perfT * 0.8 + d[j + 3]) * 0.45 * dt; d[j + 2] += Math.cos(perfT * 0.6 + d[j + 3]) * 0.3 * dt;
+    const j = i * 4, wv = WIND.k * 1.1; d[j + 1] -= 1.1 * dt; d[j] += (Math.sin(perfT * 0.8 + d[j + 3]) * 0.45 + WIND.x * wv) * dt; d[j + 2] += (Math.cos(perfT * 0.6 + d[j + 3]) * 0.3 + WIND.z * wv) * dt;
+    if (d[j] > 20) d[j] -= 40; else if (d[j] < -20) d[j] += 40;
+    if (d[j + 2] > 20) d[j + 2] -= 40; else if (d[j + 2] < -20) d[j + 2] += 40;
     if (d[j + 1] < -2) { d[j + 1] += 20; d[j] = rand(-20, 20); d[j + 2] = rand(-20, 20); }
     snowFx.pos[i * 3] = t.x + d[j]; snowFx.pos[i * 3 + 1] = d[j + 1]; snowFx.pos[i * 3 + 2] = t.z + d[j + 2];
   }
@@ -3221,7 +4324,10 @@ function strike() {
   bolt.geometry = new THREE.BufferGeometry(); bolt.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   boltT = 0.22; flashK = 1;
   tween(0.01, 0.13, () => {}, () => { flashK = Math.max(flashK, 0.75); });
-  setTimeout(thunder, rand(300, 1400));
+  // 声音比闪电晚到：离镜头越远越晚、越闷；左右按闪电在屏幕上的位置
+  const dist = Math.hypot(x1 - controls.target.x, z1 - controls.target.z), near = clamp(1 - dist / 45, 0.1, 1);
+  _p.set(x1, y1, z1).project(camera); const pan = _p.x;
+  setTimeout(() => thunder(near, pan), 120 + dist * 28 + rand(0, 200));
 }
 // 雨声与雷声（WebAudio 噪声）
 // 雨声：低沉的沙沙底噪 + 高频嘶声 + 随机雨点 + 偶尔的嘀嗒，整体随阵雨起伏
@@ -3288,12 +4394,289 @@ function updateRainAudio(dt) {
   while (A.acc >= 1) { A.acc -= 1; rainDrop(now + rand(0.01, 0.12), Math.random() < 0.06); }
   if (Math.random() < dt * r * 2.5) rainDrip(now + rand(0.02, 0.2));
 }
-function thunder() {
+// 雷声：近处先有一声炸响，随后是几波由亮转闷的滚雷和长长的低频轰鸣；越远越闷、越轻，左右声道跟着闪电的方位
+let thunderBuf = null;
+function brownBuffer(sec) {
+  const b = actx.createBuffer(1, Math.floor(actx.sampleRate * sec), actx.sampleRate), d = b.getChannelData(0); let last = 0;
+  for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
+  return b;
+}
+function thunder(near = 0.6, pan = 0) {
   if (muted || !actx || actx.state !== 'running') return;
-  const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(), t = actx.currentTime;
-  src.buffer = noiseBuffer(3); f.type = 'lowpass'; f.frequency.value = 160;
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.05); g.gain.exponentialRampToValueAtTime(0.15, t + 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
-  src.connect(f).connect(g).connect(actx.destination); src.start(t); src.stop(t + 3);
+  if (!thunderBuf) thunderBuf = { brown: brownBuffer(6), white: noiseBuffer(1) };
+  const t = actx.currentTime, comp = actx.createDynamicsCompressor();
+  comp.threshold.value = -16; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.4;
+  let out = comp; comp.connect(actx.destination);
+  if (actx.createStereoPanner) { const p = actx.createStereoPanner(); p.pan.value = clamp(pan, -0.8, 0.8); p.connect(comp); out = p; }
+  const noise = (buf, at, dur, type, f0, f1, peak, atk) => {
+    const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+    s.buffer = buf; f.type = type; f.frequency.setValueAtTime(f0, at); f.frequency.exponentialRampToValueAtTime(f1, at + dur);
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(peak, at + atk); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    s.connect(f).connect(g).connect(out); s.start(at, rand(0, Math.max(0, buf.duration - dur - 0.1))); s.stop(at + dur + 0.05);
+  };
+  if (near > 0.5) noise(thunderBuf.white, t, 0.35, 'highpass', 1800, 500, 0.55 * near, 0.004);
+  const rolls = 3 + Math.floor(rand(0, 3)); let at = t + (near > 0.5 ? 0.04 : 0.1);
+  for (let i = 0; i < rolls; i++) {
+    const dur = rand(1.0, 2.2), peak = (1.25 - i * 0.18) * (0.45 + 0.55 * near);
+    noise(thunderBuf.brown, at, dur, 'lowpass', lerp(380, 1300, near) * rand(0.8, 1.15), 110, Math.max(0.12, peak), rand(0.03, 0.12));
+    at += rand(0.25, 0.7);
+  }
+  noise(thunderBuf.brown, t, rolls * 0.5 + 2.6, 'lowpass', 220, 55, 0.9 * (0.5 + 0.5 * near), 0.25);
+}
+// 飘落的树叶（秋天的落叶树）和花瓣（春天开花的树）：从树冠里掉出来，顺风打着旋飘，落到草地或水面上停一会儿再消失；飘出岛外的会一直往下掉
+const FALL_N = 600;
+const fallMat = new THREE.MeshStandardMaterial({ roughness: 0.8, side: THREE.DoubleSide, envMapIntensity: 0.3 });
+const fallMesh = new THREE.InstancedMesh(PETAL, fallMat, FALL_N);
+fallMesh.count = 0; fallMesh.frustumCulled = false; fallMesh.castShadow = true; fallMesh.setColorAt(0, new THREE.Color()); scene.add(fallMesh);
+const falling = [];
+let fallTrees = [], fallScan = 0, fallAcc = 0;
+function fallPalette(e) {
+  const sp = SPECIES[e.species];
+  if (S.season === 'autumn' && !sp.leaf.winter && e.cr) return sp.leaf.autumn;
+  if (S.season === 'spring' && sp.springCell) return sp.leaf.spring;
+  return null;
+}
+function spawnFalling(e, pal) {
+  const box = e.crown.geometry.boundingBox || (e.crown.geometry.computeBoundingBox(), e.crown.geometry.boundingBox);
+  _p.set(lerp(box.min.x, box.max.x, rand(0.15, 0.85)), lerp(box.min.y, box.max.y, rand(0.1, 0.7)), lerp(box.min.z, box.max.z, rand(0.15, 0.85)));
+  e.crown.localToWorld(_p);
+  const c = new THREE.Color(pick(pal)); if (S.season === 'autumn' && Math.random() < 0.25) c.lerp(new THREE.Color('#8a6a3a'), 0.4);
+  falling.push({ x: _p.x, y: _p.y, z: _p.z, vx: 0, vy: -0.2, vz: 0, rx: rand(0, 6), ry: rand(0, 6), rz: rand(0, 6), sx: rand(-4, 4), sy: rand(-3, 3), sz: rand(-4, 4), ph: rand(0, 6), size: S.season === 'spring' ? rand(0.09, 0.13) : rand(0.14, 0.2), t: 0, land: 0, ly: 0, c });
+}
+function updateFalling(dt) {
+  if ((fallScan -= dt) <= 0) {
+    fallScan = 1;
+    fallTrees = [];
+    for (const e of entities) if (e.type === 'tree' && !e.dead && e.crown && e.crown.visible && fallPalette(e)) fallTrees.push(e);
+  }
+  const rate = (WX.snow > 0.5 ? 0 : 1) * Math.min(fallTrees.length, 40) * (S.season === 'spring' ? 0.3 : 0.45) * (0.25 + WIND.k * 0.9);
+  fallAcc += dt * rate;
+  while (fallAcc >= 1) { fallAcc -= 1; if (falling.length < FALL_N && fallTrees.length) { const e = pick(fallTrees), pal = fallPalette(e); if (pal) spawnFalling(e, pal); } }
+  let k = 0;
+  for (let i = falling.length - 1; i >= 0; i--) {
+    const f = falling[i]; f.t += dt;
+    let sc = 1;
+    if (!f.land) {
+      // 空中：水平速度追着风走（阵风里更快），竖直方向是带摆动的慢速下落
+      const g = gustAt(f.x, f.z), wk = WIND.k * (0.6 + 1.1 * g);
+      f.vx += (WIND.x * wk * 1.3 - f.vx) * Math.min(1, dt * 1.6); f.vz += (WIND.z * wk * 1.3 - f.vz) * Math.min(1, dt * 1.6);
+      f.vy += (-0.55 + 0.25 * Math.sin(f.t * 2.4 + f.ph) * Math.min(1, WIND.k) - f.vy) * Math.min(1, dt * 2);
+      const sw = Math.sin(f.t * 3.1 + f.ph) * 0.5;
+      f.x += (f.vx + sw * -WIND.z) * dt; f.y += f.vy * dt; f.z += (f.vz + sw * WIND.x) * dt;
+      f.rx += f.sx * dt; f.ry += f.sy * dt; f.rz += f.sz * dt;
+      const onIsland = Math.hypot(f.x, f.z) < R - 0.3;
+      if (onIsland) {
+        const wl = waterLevelAt(f.x, f.z), gy = wl !== null ? Math.max(wl, heightAt(f.x, f.z)) : heightAt(f.x, f.z);
+        if (f.y <= gy + 0.03) { f.land = wl !== null ? 2 : 1; f.ly = gy + (wl !== null ? 0.012 : 0.025); f.t = 0; f.rx = rand(-0.2, 0.2); f.rz = rand(-0.2, 0.2); }
+      } else if (f.y < -14 || Math.hypot(f.x, f.z) > R * 1.8) { falling.splice(i, 1); continue; }
+    } else {
+      // 落地后：草地上停 4~7 秒，大风会把它吹着滚一段；水面上慢慢漂走
+      const life = f.land === 2 ? 9 : 5.5;
+      if (f.t > life) { falling.splice(i, 1); continue; }
+      sc = 1 - smooth(life - 1.2, life, f.t);
+      const push = f.land === 2 ? 0.12 : Math.max(0, WIND.k - 1.2) * 0.8 * gustAt(f.x, f.z);
+      if (push > 0.01) {
+        f.x += WIND.x * push * dt; f.z += WIND.z * push * dt; f.ry += push * dt * 2;
+        if (Math.hypot(f.x, f.z) > R - 0.3) { f.land = 0; f.t = 0; }
+        else if (f.land === 1) f.ly = heightAt(f.x, f.z) + 0.025;
+      }
+    }
+    _e.set(f.rx, f.ry, f.rz); _q.setFromEuler(_e);
+    _m.compose(_p.set(f.x, f.land ? f.ly : f.y, f.z), _q, _s.set(f.size * sc, 1, f.size * 0.7 * sc));
+    fallMesh.setMatrixAt(k, _m); fallMesh.setColorAt(k, f.c); k++;
+  }
+  fallMesh.count = k; fallMesh.instanceMatrix.needsUpdate = true; if (fallMesh.instanceColor) fallMesh.instanceColor.needsUpdate = true;
+}
+// ================= 小鸟：成群在岛上空盘旋，时不时落到树梢、屋脊、城墙上歇一会儿 =================
+// 每只鸟：飞行(fly) → 落下(land) → 停歇(perch) → 起飞(takeoff) 循环；夜里和下大雨时都会找地方落下
+const birdMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: THREE.DoubleSide, envMapIntensity: 0.4 });
+const BIRD_KINDS = [
+  { body: '#8a6a4a', belly: '#e8d8bc', wing: '#6a4e36', head: '#7a5a3e', beak: '#d8a040' },   // 麻雀
+  { body: '#4a78c8', belly: '#e8945a', wing: '#3a62aa', head: '#4a78c8', beak: '#3a3a3a' },   // 东蓝鸲
+  { body: '#c83a32', belly: '#d8584a', wing: '#a82e2a', head: '#c83a32', beak: '#f0a040' },   // 主红雀
+  { body: '#8a8f96', belly: '#f2efe8', wing: '#5a5f66', head: '#2a2a2e', beak: '#3a3a3a' },   // 山雀
+  { body: '#e8c43a', belly: '#f2dc6a', wing: '#2a2a2a', head: '#e8c43a', beak: '#e8a060' }    // 金翅雀
+];
+// 翅膀：根部贴着身体（x=0），向 +x 展开；左翼镜像
+const WING_GEO = (() => {
+  const o = [[0, 0.07], [0.12, 0.05], [0.25, -0.04], [0.11, -0.09], [0, -0.07]], pos = [];
+  for (let i = 1; i < o.length - 1; i++) for (const q of [o[0], o[i], o[i + 1]]) pos.push(q[0], 0, q[1]);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals(); return g;
+})();
+function makeBird(kind) {
+  const root = new THREE.Group(), body = new THREE.Group(); root.add(body);
+  const b = new Builder();
+  b.add(PEB, jc(kind.body, 0.03), M(0, 0, 0, 0, 0, 0, 0.07, 0.068, 0.14));
+  b.add(PEB, jc(kind.belly, 0.03), M(0, -0.018, 0.02, 0, 0, 0, 0.06, 0.055, 0.11));
+  b.add(PEB, jc(kind.head, 0.03), M(0, 0.05, 0.11, 0, 0, 0, 0.055, 0.055, 0.058));
+  b.add(CONE, kind.beak, M(0, 0.045, 0.175, 0, Math.PI / 2, 0, 0.018, 0.05, 0.018));
+  for (const s of [-1, 1]) b.add(PEB, '#1a1a1a', M(s * 0.036, 0.062, 0.145, 0, 0, 0, 0.011, 0.011, 0.011));
+  b.add(BOX, jc(kind.wing, 0.03), M(0, 0.012, -0.17, 0, -0.25, 0, 0.075, 0.012, 0.13));
+  const m = b.mesh(birdMat, true); body.add(m);
+  const wings = [-1, 1].map(s => {
+    const wb = new Builder(); wb.add(WING_GEO, jc(kind.wing, 0.03), M(0, 0, 0, 0, 0, 0, s, 1, 1));
+    const w = wb.mesh(birdMat, true); w.position.set(s * 0.045, 0.025, 0); w.userData.s = s; body.add(w); return w;
+  });
+  scene.add(root);
+  return { root, body, wings, p: root.position, v: new THREE.Vector3(), state: 'fly', t: 0, ph: rand(0, 6), flap: rand(0, 6), glide: 0, next: rand(6, 20), chirp: rand(2, 6) };
+}
+const flocks = [], birds = [];
+for (let f = 0; f < 2; f++) {
+  const kind = pick(BIRD_KINDS), fl = { a: rand(0, 6.28), w: rand(0.2, 0.28) * (f ? -1 : 1), h: rand(9, 12), ph: rand(0, 6), pos: new THREE.Vector3(), dir: new THREE.Vector3(1, 0, 0) };
+  flocks.push(fl);
+  const n = 5 + Math.floor(rand(0, 3));
+  for (let i = 0; i < n; i++) {
+    const bd = makeBird(Math.random() < 0.8 ? kind : pick(BIRD_KINDS)); bd.fl = fl; bd.off = new THREE.Vector3(rand(-1.6, 1.6), rand(-0.6, 0.6), rand(-1.6, 1.6));
+    bd.p.set(rand(-R, R) * 0.5, fl.h, rand(-R, R) * 0.5); birds.push(bd);
+  }
+}
+const birdRay = new THREE.Raycaster(), _bv = new THREE.Vector3(), _bn = new THREE.Vector3(), DOWN = new THREE.Vector3(0, -1, 0);
+// 从正上方往下打几条射线，取最高的那个落点：屋顶上会落到屋脊附近，树上会落到树梢
+function topHit(e, samples) {
+  const meshes = []; e.group.traverseVisible(o => { if (o.isMesh && !o.isInstancedMesh && o.material !== flowerMat) meshes.push(o); });
+  if (!meshes.length) return null;
+  let best = null;
+  for (const [x, z] of samples) {
+    birdRay.set(_bv.set(x, 60, z), DOWN);
+    for (const h of birdRay.intersectObjects(meshes, false)) {
+      if (!h.face) continue;
+      _bn.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+      if (Math.abs(_bn.y) < 0.35) continue;
+      if (!best || h.point.y > best.point.y) best = h;
+      break;
+    }
+  }
+  return best;
+}
+function findPerch() {
+  const cands = entities.filter(e => !e.dead && (e.type === 'tree' || e.type === 'house' || e.type === 'wall' || e.type === 'tower'));
+  for (let t = 0; t < 5 && cands.length; t++) {
+    const e = pick(cands), s = [];
+    if (e.type === 'tree') { const r = Math.max(0.5, (e.cr || 0.6) * 0.6); for (let i = 0; i < 5; i++) { const a = rand(0, 6.28), d = Math.sqrt(Math.random()) * r; s.push([e.x + Math.cos(a) * d, e.z + Math.sin(a) * d]); } }
+    else if (e.type === 'wall' && e.raw) { for (let i = 0; i < 3; i++) { const q = pick(e.raw); s.push([q.x + rand(-0.15, 0.15), q.z + rand(-0.15, 0.15)]); } }
+    else { const bb = new THREE.Box3().setFromObject(e.group); if (bb.isEmpty()) continue; for (let i = 0; i < 6; i++) s.push([rand(bb.min.x, bb.max.x), rand(bb.min.z, bb.max.z)]); }
+    const h = topHit(e, s); if (!h || Math.hypot(h.point.x, h.point.z) > R - 0.5) continue;
+    if (e.chimneys.some(c => Math.hypot(c.x - h.point.x, c.z - h.point.z) < 0.6)) continue;   // 不落在冒烟的烟囱上
+    if (birds.some(o => o.perchE === e && o.target.distanceTo(h.point) < 0.3)) continue;
+    // 树会随风倾斜，落点记在树的局部坐标里，每帧再换回世界坐标
+    const local = e.type === 'tree' && e.sway ? e.sway.worldToLocal(h.point.clone()) : null;
+    return { e, p: h.point.clone(), local };
+  }
+  return null;
+}
+function birdChirp(bd) {
+  if (muted || !actx || actx.state !== 'running') return;
+  const d = bd.p.distanceTo(camera.position), vol = 0.05 * clamp(1 - d / 45, 0, 1); if (vol < 0.004) return;
+  let t = actx.currentTime + 0.01; const n = 2 + Math.floor(rand(0, 3)), f0 = rand(2600, 4200), up = Math.random() < 0.5;
+  for (let i = 0; i < n; i++) {
+    const o = actx.createOscillator(), g = actx.createGain(), f = f0 * rand(0.92, 1.08);
+    o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(up ? f * 1.45 : f * 0.7, t + 0.07);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 0.12); t += rand(0.09, 0.15);
+  }
+}
+const _bt = new THREE.Vector3(), _bd = new THREE.Vector3();
+function updateBirds(dt) {
+  const roost = night > 0.6 || WX.rain > 0.5;   // 天黑或大雨：都去找地方歇着
+  for (const fl of flocks) {
+    fl.a += fl.w * dt;
+    const cx = Math.sin(perfT * 0.04 + fl.ph) * R * 0.25, cz = Math.cos(perfT * 0.033 + fl.ph) * R * 0.25, rr = R * 0.55;
+    _bt.set(cx + Math.cos(fl.a) * rr, fl.h + Math.sin(fl.a * 2.3 + fl.ph) * 1.4, cz + Math.sin(fl.a) * rr * 0.75);
+    fl.dir.subVectors(_bt, fl.pos).normalize(); fl.pos.copy(_bt);
+  }
+  for (const bd of birds) {
+    bd.t += dt;
+    if (bd.state === 'perch' || bd.state === 'land') {
+      if (!bd.perchE || bd.perchE.dead) { bd.state = 'takeoff'; bd.t = 0; bd.v.set(rand(-1, 1), 2.5, rand(-1, 1)); }
+      else if (bd.local) bd.target.copy(bd.local).applyMatrix4(bd.perchE.sway.matrixWorld);
+    }
+    let flapK = 1;
+    if (bd.state === 'fly' || bd.state === 'takeoff') {
+      // 跟着鸟群走：鸟群位置 + 自己的编队偏移 + 一点晃动
+      _bt.copy(bd.fl.pos).add(bd.off); _bt.x += Math.sin(perfT * 1.3 + bd.ph) * 0.5; _bt.y += Math.sin(perfT * 1.7 + bd.ph) * 0.3;
+      _bd.subVectors(_bt, bd.p); const dist = _bd.length(), sp = clamp(dist * 1.2, 3, 7.5);
+      _bd.multiplyScalar(sp / Math.max(dist, 0.001));
+      bd.v.lerp(_bd, Math.min(1, dt * (bd.state === 'takeoff' ? 1.2 : 2)));
+      if (bd.state === 'takeoff' && bd.t > 1.2) { bd.state = 'fly'; bd.next = rand(8, 25); }
+      if (bd.state === 'fly' && ((bd.next -= dt) <= 0 || roost)) {
+        const pc = findPerch();
+        if (pc) { bd.state = 'land'; bd.perchE = pc.e; bd.target = pc.p; bd.local = pc.local; bd.t = 0; }
+        else bd.next = rand(3, 8);
+      }
+      bd.glide = bd.v.y < -0.4 || Math.sin(perfT * 0.7 + bd.ph * 3) > 0.6 ? Math.min(1, bd.glide + dt * 3) : Math.max(0, bd.glide - dt * 4);
+      flapK = 1 - bd.glide * 0.85;
+    } else if (bd.state === 'land') {
+      // 落下：先飞到落点上方，越近越慢，最后几拍快速扑翅刹住
+      _bt.copy(bd.target); const dist = _bt.distanceTo(bd.p); _bt.y += Math.min(dist * 0.35, 1.5);
+      _bd.subVectors(_bt, bd.p); const sp = Math.min(6, dist * 1.8 + 0.25);
+      _bd.multiplyScalar(sp / Math.max(_bd.length(), 0.001));
+      bd.v.lerp(_bd, Math.min(1, dt * 3));
+      flapK = dist < 1.2 ? 1.6 : 0.6;
+      if (dist < 0.07) { bd.state = 'perch'; bd.t = 0; bd.stay = rand(5, 16); bd.p.copy(bd.target); bd.v.set(0, 0, 0); bd.yaw = Math.atan2(bd.root.getWorldDirection(_bd).x, _bd.z); bd.act = rand(0.5, 1.5); }
+    }
+    if (bd.state === 'perch') {
+      bd.p.copy(bd.target);
+      // 停着：时不时转个身、低头啄一下、叫两声；歇够了（而且不是夜里/大雨）就起飞回到鸟群
+      if ((bd.act -= dt) <= 0) {
+        bd.act = rand(0.6, 2.2);
+        if (Math.random() < 0.5) bd.yaw += rand(-1.6, 1.6); else bd.peck = 0.35;
+      }
+      bd.peck = Math.max(0, (bd.peck || 0) - dt);
+      bd.root.rotation.set(0, bd.yaw, 0);
+      bd.body.rotation.x = bd.peck > 0 ? Math.sin(bd.peck / 0.35 * Math.PI) * 0.6 : -0.15;
+      bd.body.position.y = 0.06;
+      if (!roost && (bd.chirp -= dt) <= 0) { bd.chirp = rand(3, 9); if (Math.random() < 0.6) birdChirp(bd); }
+      for (const w of bd.wings) { w.rotation.set(0, w.userData.s * 1.42, -w.userData.s * 0.25); w.scale.x = 0.72; }   // 收起翅膀：向后贴着身体
+      if (bd.t > bd.stay && !roost) { bd.state = 'takeoff'; bd.t = 0; bd.perchE = null; bd.v.set(Math.sin(bd.yaw) * 1.5, 2.8, Math.cos(bd.yaw) * 1.5); }
+      continue;
+    }
+    bd.p.addScaledVector(bd.v, dt);
+    // 飞行姿态：机头对准速度方向，翅膀上下扑（滑翔时张开不动）
+    if (bd.v.lengthSq() > 0.01) { _bt.copy(bd.p).add(bd.v); bd.root.lookAt(_bt); }
+    bd.body.rotation.x = 0; bd.body.position.y = 0;
+    bd.flap += dt * 24 * Math.max(0.3, flapK);
+    const ang = bd.glide > 0.5 && bd.state === 'fly' ? 0.08 : Math.sin(bd.flap) * 0.95 * Math.max(0.35, flapK);
+    for (const w of bd.wings) { w.rotation.set(0, 0, w.userData.s * ang); w.scale.x = 1; }
+  }
+}
+// 风的痕迹：起风时空中偶尔划过几道淡淡的白色气流，顺风前进，途中打一个小卷
+const WISP_N = 8, WISP_L = 20;
+const wispMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, opacity: 0 });
+const wisps = Array.from({ length: WISP_N }, () => {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WISP_L * 3), 3));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(WISP_L * 4), 4));
+  const line = new THREE.Line(g, wispMat); line.frustumCulled = false; line.visible = false; scene.add(line);
+  return { line, hist: [], t: 0, life: 0, delay: rand(0, 6) };
+});
+function updateWisps(dt) {
+  const show = smooth(1.3, 2.1, WIND.k);
+  wispMat.opacity = show * 0.45 * (1 - night * 0.6);
+  for (const w of wisps) {
+    if (show < 0.02) { w.line.visible = false; w.hist.length = 0; w.life = 0; continue; }
+    if (w.t >= w.life) {
+      if ((w.delay -= dt) > 0) { w.line.visible = false; continue; }
+      const sx = -WIND.z, sz = WIND.x, side = rand(-0.7, 0.7) * R, back = rand(0.4, 0.9) * R;
+      w.x = -WIND.x * back + sx * side; w.z = -WIND.z * back + sz * side; w.y = rand(1.5, 4.5) + Math.max(0, baseHeight(w.x, w.z));
+      w.t = 0; w.life = rand(3.5, 5.5); w.curl = rand(0.35, 0.65); w.cr = rand(0.6, 1.1); w.hist.length = 0; w.delay = rand(0.5, 4);
+    }
+    w.t += dt;
+    const sp = 2.6 + WIND.k * 1.4, k = w.t / w.life;
+    w.x += WIND.x * sp * dt; w.z += WIND.z * sp * dt;
+    // 在生命的某一段里绕一个竖直的小圈
+    const ck = smooth(w.curl - 0.12, w.curl + 0.12, k), ca = ck * Math.PI * 2;
+    const wob = Math.sin(w.t * 2.3) * 0.35, hx = w.x + Math.sin(ca) * w.cr * WIND.x - wob * WIND.z, hy = w.y + (1 - Math.cos(ca)) * w.cr * 0.8 + Math.sin(w.t * 1.7) * 0.25, hz = w.z + Math.sin(ca) * w.cr * WIND.z + wob * WIND.x;
+    w.hist.unshift(hx, hy, hz); if (w.hist.length > WISP_L * 3) w.hist.length = WISP_L * 3;
+    const pos = w.line.geometry.attributes.position, col = w.line.geometry.attributes.color, n = w.hist.length / 3;
+    const fade = smooth(0, 0.15, k) * (1 - smooth(0.8, 1, k));
+    for (let i = 0; i < WISP_L; i++) {
+      const j = Math.min(i, n - 1) * 3;
+      pos.setXYZ(i, w.hist[j], w.hist[j + 1], w.hist[j + 2]);
+      const a = i < n ? fade * Math.sin(Math.PI * i / (WISP_L - 1)) : 0;
+      col.setXYZW(i, 1, 1, 1, a);
+    }
+    pos.needsUpdate = true; col.needsUpdate = true; w.line.visible = n > 2;
+  }
 }
 // 秋天树下的落叶
 const litterMat = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide, envMapIntensity: 0.3 });
@@ -3322,10 +4705,11 @@ function applySeason() {
   const sn = SEASON[S.season];
   grassU.uTint.value.setRGB(...sn.grass.map((v, i) => v * ST.bladeTint[i]));
   terrainU.uGrassTint.value.setRGB(...sn.grass.map((v, i) => v * ST.groundTint[i]));
-  for (const md of meadow) md.inst.visible = !md.seasons || md.seasons.includes(S.season);
+  for (const md of meadow) md.inst.visible = (!md.seasons || md.seasons.includes(S.season)) && (!md.only || md.only.includes(ST.build)) && !(md.hide && md.hide.includes(ST.build));
   for (const e of entities) {
     if (e.type === 'tree') applyTreeSeason(e);
     if (e.type === 'flower') e.group.visible = S.season !== 'winter';
+    if (e.type === 'aquatic') seatAquatic(e);
   }
   waterFx.ice.visible = S.season === 'winter';
   litterDirty = true;
@@ -3349,7 +4733,7 @@ function applyLook() {
   sunGlowK = ENVB.glow * (1 - c);
   pollen.m.opacity = ENVB.pollen * (1 - c);
   terrainU.uSun.value = ENVB.uSun * (1 - 0.85 * c);
-  grassU.uWind.value = 1 + 1.7 * st + 0.35 * c;
+  WIND.target = WINDS.find(w => w.v === S.wind).k + 1.3 * st + 0.3 * c;
   renderer.toneMappingExposure = ENVB.exp * (1 - 0.22 * st);
   rain.mat.opacity = 0.5 * WX.rain; snowFx.mat.opacity = 0.95 * WX.snow;
   cloudLayer.visible = c > 0.02;
@@ -3384,6 +4768,9 @@ function renderSide() {
   mk(document.getElementById('wxChips'), WEATHERS, S.weather, v => { S.weather = v; nextBolt = 1.2; });
   mk(document.getElementById('seasonChips'), Object.entries(SEASON).map(([v, sn]) => ({ v, n: sn.name })), S.season, v => { S.season = v; applySeason(); });
   document.getElementById('wxName').textContent = WEATHERS.find(w => w.v === S.weather).n;
+  mk(document.getElementById('windChips'), WINDS, S.wind, v => { S.wind = v; applyLook(); });
+  mk(document.getElementById('flowChips'), FLOWS, S.timeFlow, v => { S.timeFlow = v; });
+  document.getElementById('windName').textContent = WINDS.find(w => w.v === S.wind).n;
 }
 
 // ================= 时辰 =================
@@ -3399,57 +4786,125 @@ const cA = new THREE.Color(), cB = new THREE.Color();
 const mix = (a, b, k) => cA.set(a).lerp(cB.set(b), k).clone();
 let night = 0, sunGlowK = 0;
 const sunGlowEl = document.getElementById('sunglow');
+// 一天 24 小时：6 点日出、18 点日落。各风格的天色关键帧按旧的 0→1（清晨→夜晚）写，这里换算成钟点，
+// 再补上黎明前、黄昏蓝调和深夜几段，首尾相接成一整圈
+const KEY_H = [6.4, 9, 12, 15, 17.5, 19.8];
+function dayKeys() {
+  const K = KEYS.map((k, i) => ({ ...k, h: KEY_H[i] })), dawn = K[0], dusk = K[4], nt = K[5];
+  const hex = (a, b, k) => '#' + mix(a, b, k).getHexString();
+  const blend = (a, b, k, o) => ({ top: hex(a.top, b.top, k), hor: hex(a.hor, b.hor, k), bot: hex(a.bot, b.bot, k), sun: hex(a.sun, b.sun, k), si: lerp(a.si, b.si, k), hemi: lerp(a.hemi, b.hemi, k), ...o });
+  const deep = { ...nt, top: hex(nt.top, '#000000', 0.3), bot: hex(nt.bot, '#000000', 0.25) };
+  const blue = blend(dusk, nt, 0.55, { h: 18.6, si: 0.3 }); blue.hor = hex(blue.hor, '#b088c8', 0.35);
+  const pre = blend(nt, dawn, 0.45, { h: 5.6, si: 0.25 }); pre.hor = hex(pre.hor, '#c890b8', 0.4);
+  return [{ ...deep, h: 0 }, { ...nt, h: 4.6 }, pre, ...K.slice(0, 5), blue, K[5], { ...nt, h: 22 }, { ...deep, h: 24 }];
+}
+// 太阳 / 月亮在天上的方向：dk 是"从升起算起过了几个半天"，0~1 之间在地平线以上
+// disp 是天球上画日轮/月亮用的方向：镜头总是俯视，天空只露出地平线附近一窄条，所以把画出来的高度压低到地平线上 2°~10°，
+// 让它们贴着天边从东走到西；光照（影子）仍按真实高度
+function skyDir(dk, maxEl, out, disp) {
+  // 高度角用 sin 的 0.7 次方：离开地平线后升得快一些，傍晚不会长时间贴地斜照、把草地压得太暗
+  const sn = Math.sin(dk * Math.PI), el = Math.sign(sn) * Math.pow(Math.abs(sn), 0.7) * maxEl, az = Math.PI * (1.35 - dk * 0.86);
+  out.set(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
+  const de = el > 0 ? THREE.MathUtils.degToRad(2) + el * 0.14 : el;
+  disp.set(Math.cos(az) * Math.cos(de), Math.sin(de), Math.sin(az) * Math.cos(de));
+  return THREE.MathUtils.radToDeg(el);
+}
+// 月相：0 新月 → 0.5 满月 → 1。月亮比太阳晚升起 月相×24 小时，所以满月在日落时升起、半夜最高，新月整夜看不见
+const MOON_NAMES = ['新月', '娥眉月', '上弦月', '盈凸月', '满月', '亏凸月', '下弦月', '残月'];
+const DAY = { phase: 4, t: 0.66 };   // t：一天里的时刻 0~1（滑杆有步长，流逝时的小增量要记在这里）
+const _sd = new THREE.Vector3(), _md = new THREE.Vector3(), _sdd = new THREE.Vector3(), _mdd = new THREE.Vector3(), _ld = new THREE.Vector3(), _tint = new THREE.Color(), _lift = new THREE.Color(), WHITE_C = new THREE.Color('#ffffff');
+const T_GOLD = new THREE.Color(1.08, 0.99, 0.88), T_BLUE = new THREE.Color(0.92, 0.82, 1.08), T_NIGHT = new THREE.Color(0.8, 0.76, 1.16);
+const L_NIGHT = new THREE.Color(0.012, 0.007, 0.03), L_BLUE = new THREE.Color(0.012, 0.006, 0.02);
 function applyTime(t) {
-  let i = 0; while (i < KEYS.length - 2 && KEYS[i + 1].t < t) i++;
-  const A = KEYS[i], B = KEYS[i + 1], k = smooth(0, 1, (t - A.t) / (B.t - A.t));
+  const h = ((t * 24) % 24 + 24) % 24, KS = dayKeys();
+  let i = 0; while (i < KS.length - 2 && KS[i + 1].h < h) i++;
+  const A = KS[i], B = KS[i + 1], k = smooth(0, 1, (h - A.h) / Math.max(1e-3, B.h - A.h));
   skyU.top.value.copy(mix(A.top, B.top, k)); skyU.hor.value.copy(mix(A.hor, B.hor, k)); skyU.bot.value.copy(mix(A.bot, B.bot, k));
-  const sc = mix(A.sun, B.sun, k);
-  sun.color.copy(sc); sun.intensity = lerp(A.si, B.si, k);
-  hemi.intensity = lerp(A.hemi, B.hemi, k) * 0.55;
-  hemi.color.copy(skyU.top.value).lerp(new THREE.Color('#ffffff'), 0.55);
+  const sc = mix(A.sun, B.sun, k), si = lerp(A.si, B.si, k);
+  // 太阳和月亮的位置
+  const elS = skyDir((((h - 6) / 12) % 2 + 2) % 2, THREE.MathUtils.degToRad(62), _sd, _sdd);
+  const ph = DAY.phase / 8, illum = (1 - Math.cos(ph * Math.PI * 2)) / 2;
+  const elM = skyDir((((h - ph * 24 - 6) / 12) % 2 + 2) % 2, THREE.MathUtils.degToRad(55), _md, _mdd);
+  night = smooth(2, -8, elS);
+  const moonUp = smooth(-2, 6, elM), moonLight = moonUp * illum;
+  // 主光：白天是太阳；太阳落到地平线下以后换成月光（月亮没出来就从头顶打一点很弱的天光），交接时先暗下去再亮起来
+  const w = smooth(-1, -5, elS);
+  if (moonUp > 0.05) _ld.copy(_md); else _ld.set(0.3, 0.9, 0.3).normalize();
+  const dir = _sd.clone().lerp(_ld, w).normalize();
+  sun.position.copy(dir).multiplyScalar(60 * WS); sun.target.position.set(0, 0, 0);
+  sun.color.copy(sc);
+  sun.intensity = si * lerp(1, 0.3 + 0.75 * moonLight, w) * (1 - 0.85 * Math.sin(w * Math.PI));
+  const gold = smooth(16, 3, elS) * smooth(-3, 1, elS), blueH = smooth(1, -3, elS) * (1 - night);
+  // 晨昏太阳贴地斜照，草地背光一片暗，用天光补一点
+  hemi.intensity = lerp(A.hemi, B.hemi, k) * 0.55 * lerp(1, 0.75 + 0.35 * moonLight, night) * (1 + 0.7 * gold + 0.4 * blueH);
+  hemi.color.copy(skyU.top.value).lerp(WHITE_C, 0.55);
   scene.fog.color.copy(skyU.hor.value);
-  night = smooth(0.86, 0.98, t);
   skyU.gnd.value.set(ST ? ST.gnd : '#55703a').multiplyScalar(lerp(1, 0.18, night));
   envDirty = true;
-  terrainU.uSun.value = (1 - night) * lerp(A.si, B.si, k) / 3;
+  terrainU.uSun.value = (1 - night) * si / 3;
   pollen.m.opacity = (1 - night) * 0.6;
   clouds.children.forEach(c => { c.material.emissiveIntensity = 0.28 * (1 - night) + 0.02; c.material.color.setScalar(lerp(1, 0.35, night)); });
-  sunGlowK = (1 - night) * lerp(0.75, 1, smooth(0.5, 0.8, t));
-  const el = THREE.MathUtils.degToRad(lerp(A.el, B.el, k));
-  const az = night > 0.5 ? 2.2 : Math.PI * (1.35 - t);
-  const dir = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
-  sun.position.copy(dir).multiplyScalar(60 * WS); sun.target.position.set(0, 0, 0);
-  skyU.sunDir.value.copy(dir); skyU.sunCol.value.copy(sc).multiplyScalar(night > 0.5 ? 0.25 : 1);
-  windowMat.emissiveIntensity = night * 2.2 + smooth(0.78, 0.9, t) * 0.6 + ((ST && ST.windowDay) || 0);
+  sunGlowK = (1 - night) * lerp(0.75, 1, smooth(40, 5, elS));
+  skyU.sunDir.value.copy(_sdd); skyU.sunCol.value.copy(sc).multiplyScalar(smooth(-6, 2, elS));
+  skyU.moonDir.value.copy(_mdd); skyU.moonPhase.value = ph; skyU.moonK.value = moonUp * lerp(0.4, 1, night) * (illum > 0.02 ? 1 : 0); skyU.starK.value = night;
+  windowMat.emissiveIntensity = night * 2.2 + smooth(10, 0, elS) * 0.6 + ((ST && ST.windowDay) || 0);
+  poolTileMat.emissiveIntensity = night * 0.9;
+  terrainU.uTechGlow.value = ST && ST.tech ? 0.1 + night * 0.75 : 0;
   fireflies.m.opacity = Math.max(night, (ST && ST.motes) || 0);
-  renderer.toneMappingExposure = lerp(1.0, 1.25, night);
-  const names = [[0.12, '清晨'], [0.38, '上午'], [0.6, '正午'], [0.8, '午后'], [0.93, '日落'], [1.01, '夜晚']];
-  document.getElementById('todName').textContent = names.find(n => t < n[0])[1];
+  renderer.toneMappingExposure = lerp(1.0, 1.25, night) * (1 + 0.12 * gold);
+  // 整体调色：日出日落偏暖金，黄昏蓝调偏粉紫，夜里蓝紫、暗部微微泛紫
+  _tint.setRGB(1, 1, 1).lerp(T_GOLD, gold).lerp(T_BLUE, blueH).lerp(T_NIGHT, night);
+  _lift.setRGB(0, 0, 0).lerp(L_BLUE, blueH).lerp(L_NIGHT, night);
+  gradeU.uTint.value.copy(_tint); gradeU.uLift.value.copy(_lift); gradeU.uSat.value = lerp(lerp(1, 1.06, gold), 0.8, night);
+  const names = [[4.5, '凌晨'], [7.5, '清晨'], [11, '上午'], [13, '正午'], [17, '午后'], [19, '日落'], [23.5, '夜晚'], [24.1, '深夜']];
+  const hh = Math.floor(h), mm = Math.floor((h - hh) * 60);
+  document.getElementById('todName').textContent = names.find(n => h < n[0])[1] + ' ' + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
   ENVB.top.copy(skyU.top.value); ENVB.hor.copy(skyU.hor.value); ENVB.bot.copy(skyU.bot.value);
   ENVB.si = sun.intensity; ENVB.hemi = hemi.intensity; ENVB.uSun = terrainU.uSun.value; ENVB.glow = sunGlowK; ENVB.pollen = pollen.m.opacity; ENVB.exp = renderer.toneMappingExposure;
   applyLook();
 }
 const todEl = document.getElementById('tod');
-todEl.addEventListener('input', () => applyTime(+todEl.value));
-applyTime(+todEl.value);
+todEl.addEventListener('input', () => { DAY.t = +todEl.value; applyTime(DAY.t); });
+// 时间流逝：停 / 慢（一天 6 分钟）/ 快（一天 1.5 分钟）；每过一个午夜换下一种月相
+const FLOWS = [{ v: 'stop', n: '停', len: 0 }, { v: 'slow', n: '慢', len: 360 }, { v: 'fast', n: '快', len: 90 }];
+function tickTime(dt) {
+  const f = FLOWS.find(f => f.v === S.timeFlow); if (!f.len) return;
+  DAY.t += dt / f.len;
+  if (DAY.t >= 1) { DAY.t -= 1; DAY.phase = (DAY.phase + 1) % 8; renderMoon(); }
+  todEl.value = DAY.t; applyTime(DAY.t);
+}
+function renderMoon() { document.getElementById('moonBtn').textContent = MOON_NAMES[DAY.phase]; }
+document.getElementById('moonBtn').addEventListener('click', () => { DAY.phase = (DAY.phase + 1) % 8; renderMoon(); applyTime(DAY.t); });
+renderMoon();
+DAY.t = +todEl.value; applyTime(DAY.t);
 
 // ================= 草地里零散的野花和碎石（按季节出现） =================
 {
   const geoOf = fn => { const b = new Builder(); fn(b, new THREE.Matrix4()); return b.geometry(); };
   const patch = (x, z, o = 0) => smooth(0.5, 0.72, noise(x * 0.16 + 3.7 + o, z * 0.16 - 1.3 - o));
   const sc = (a, c) => () => { const v = rand(a, c); return [v, v * rand(0.85, 1.15), v]; };
-  const SPR = ['spring', 'summer'], SSA = ['spring', 'summer', 'autumn'], SUA = ['summer', 'autumn'];
-  addMeadow(geoOf((b, m) => addDaisy(b, m, 0.28)), flowerMat, (x, z) => 0.004 + 0.08 * patch(x, z), sc(1.08, 1.75), { seasons: SSA });
-  addMeadow(geoOf(addDandelion), flowerMat, (x, z) => 0.003 + 0.016 * smooth(0.55, 0.75, noise(x * 0.2 - 8, z * 0.2 + 5)), sc(1.05, 1.55), { seasons: SPR });
-  addMeadow(geoOf(addSeedHead), flowerMat, () => 0.0022, sc(1.15, 1.55), { seasons: SPR });
+  const SPR = ['spring', 'summer'], SSA = ['spring', 'summer', 'autumn'], SUA = ['summer', 'autumn'], NOSCI = ['scifi'];
+  // 未来风地面上零星的"光纤草"：几根细白杆子顶着发光的小珠
+  const techTuftMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  addSway(techTuftMat, 0.45, 0.05);
+  for (const col of ['#5fe8ff', '#c86fff']) addMeadow(geoOf(b => {
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2 + rand(-0.25, 0.25), tl = rand(0.1, 0.2), h = rand(0.28, 0.48), d = new THREE.Vector3(Math.cos(a) * tl, h, Math.sin(a) * tl), l = d.length();
+      b.add(CYL_LO, '#aab4be', new THREE.Matrix4().compose(d.clone().multiplyScalar(0.5), new THREE.Quaternion().setFromUnitVectors(UP, d.clone().normalize()), new THREE.Vector3(0.008, l, 0.008)));
+      b.add(ICO, neon(col, 2.2), M(d.x, d.y, d.z, 0, 0, 0, 0.022, 0.022, 0.022));
+    }
+  }), techTuftMat, (x, z) => 0.004 + 0.012 * patch(x, z, col === '#5fe8ff' ? 91 : 97), sc(0.9, 1.4), { only: ['scifi'] });
+  addMeadow(geoOf((b, m) => addDaisy(b, m, 0.28)), flowerMat, (x, z) => 0.004 + 0.08 * patch(x, z), sc(1.08, 1.75), { seasons: SSA, hide: NOSCI });
+  addMeadow(geoOf(addDandelion), flowerMat, (x, z) => 0.003 + 0.016 * smooth(0.55, 0.75, noise(x * 0.2 - 8, z * 0.2 + 5)), sc(1.05, 1.55), { seasons: SPR, hide: NOSCI });
+  addMeadow(geoOf(addSeedHead), flowerMat, () => 0.0022, sc(1.15, 1.55), { seasons: SPR, hide: NOSCI });
   addMeadow(PEB, pathMat, () => 0.016, () => { const v = rand(0.05, 0.13); return [v * rand(1, 1.5), v * 0.55, v]; }, { colors: STONE_TINTS, dy: -0.01 });
-  addMeadow(geoOf(addForgetMeNot), flowerMat, (x, z) => 0.014 * patch(x, z, 11), sc(1.2, 1.6), { seasons: SPR });
-  addMeadow(geoOf(addButtercup), flowerMat, (x, z) => 0.002 + 0.012 * patch(x, z, 23), sc(1.2, 1.6), { seasons: SPR });
-  addMeadow(geoOf(addClover), flowerMat, (x, z) => 0.002 + 0.01 * patch(x, z, 37), sc(1.2, 1.5), { seasons: SSA });
-  addMeadow(geoOf(addBlackEyed), flowerMat, (x, z) => 0.008 * patch(x, z, 51), sc(1.1, 1.4), { seasons: SUA });
-  addMeadow(geoOf((b, m) => addCosmos(b, m, '#e85ca8')), flowerMat, (x, z) => 0.004 * patch(x, z, 67), sc(1.1, 1.35), { seasons: SUA });
-  addMeadow(geoOf((b, m) => addCosmos(b, m, '#ffffff')), flowerMat, (x, z) => 0.003 * patch(x, z, 67), sc(1.1, 1.35), { seasons: SUA });
-  addMeadow(geoOf(addCornflower), flowerMat, (x, z) => 0.004 * patch(x, z, 83), sc(1.1, 1.4), { seasons: SPR });
+  addMeadow(geoOf(addForgetMeNot), flowerMat, (x, z) => 0.014 * patch(x, z, 11), sc(1.2, 1.6), { seasons: SPR, hide: NOSCI });
+  addMeadow(geoOf(addButtercup), flowerMat, (x, z) => 0.002 + 0.012 * patch(x, z, 23), sc(1.2, 1.6), { seasons: SPR, hide: NOSCI });
+  addMeadow(geoOf(addClover), flowerMat, (x, z) => 0.002 + 0.01 * patch(x, z, 37), sc(1.2, 1.5), { seasons: SSA, hide: NOSCI });
+  addMeadow(geoOf(addBlackEyed), flowerMat, (x, z) => 0.008 * patch(x, z, 51), sc(1.1, 1.4), { seasons: SUA, hide: NOSCI });
+  addMeadow(geoOf((b, m) => addCosmos(b, m, '#e85ca8')), flowerMat, (x, z) => 0.004 * patch(x, z, 67), sc(1.1, 1.35), { seasons: SUA, hide: NOSCI });
+  addMeadow(geoOf((b, m) => addCosmos(b, m, '#ffffff')), flowerMat, (x, z) => 0.003 * patch(x, z, 67), sc(1.1, 1.35), { seasons: SUA, hide: NOSCI });
+  addMeadow(geoOf(addCornflower), flowerMat, (x, z) => 0.004 * patch(x, z, 83), sc(1.1, 1.4), { seasons: SPR, hide: NOSCI });
 }
 
 // ================= 场景风格 =================
@@ -3504,7 +4959,7 @@ const STYLES = {
     plaster: ['#eef1f3'], beam: '#9aa3ab', pitch: 0.4, lean: 0, smoke: '#e8f4f8',
     cobble: ['#cfd5da', '#c2c9cf', '#d8dde1', '#b8c0c6'], path: 'hex', pathGlow: ['#3fe0ff'], fence: 'scifi', rock: 'basalt',
     roofs: [{ name: '冷白', hex: '#e8eef2' }, { name: '银灰', hex: '#9aa6b0' }, { name: '青', hex: '#2fb8d0' }, { name: '橙', hex: '#f08a3a' }, { name: '石墨', hex: '#3a4048' }],
-    trees: ['cyberpine', 'orbtree', 'helix'],
+    trees: ['cyberpine', 'orbtree', 'helix', 'solartree', 'fibertree'], tech: true,
     grassTint: [0.82, 1.08, 1.0], water: ['#d8f6fa', '#2a9ab8', '#6fd0e0'], gnd: '#4a6a70',
     rockA: '#5a6068', rockB: '#7a828a', mossA: '#5a8070', mossB: '#6a9080',
     windowColor: '#6ab8d8', windowGlow: '#7fe8ff', windowMetal: 0.7, windowRough: 0.04, windowDay: 0.45,
@@ -3530,6 +4985,27 @@ const STYLES = {
     rockA: '#7a786f', rockB: '#9a978d', mossA: '#3f6a28', mossB: '#5f8a34',
     windowColor: '#efe6d0', windowGlow: '#ffb860', windowMetal: 0, windowRough: 0.9, windowDay: 0.05,
     glow: 0, grassGlow: 0, motes: 0, firefly: '#ffe68a', css: '#bcd8f0', sheep: false
+  },
+  villa: {
+    name: '别墅', desc: '洛杉矶山坡上的现代豪宅：大面积落地玻璃、错层平屋顶和悬挑露台，泳池边是修剪整齐的草坪、棕榈和意大利柏。', build: 'villa', wallTowers: false,
+    terrain: { ox: 63.1, oz: 18.4, amp: 1.1, freq: 0.05, lift: 0.2 },
+    keys: [
+      { t: 0.00, top: '#6f9ad8', hor: '#ffd6b0', bot: '#f0d0bc', sun: '#ffb88a', si: 1.8, hemi: 0.7, el: 7 },
+      { t: 0.25, top: '#3a8cf0', hor: '#bfe0fa', bot: '#d4e6f4', sun: '#fff4e0', si: 2.9, hemi: 1.1, el: 34 },
+      { t: 0.50, top: '#2a84f4', hor: '#c4e4fc', bot: '#d8e8f4', sun: '#fffaf0', si: 3.0, hemi: 1.15, el: 62 },
+      { t: 0.70, top: '#3a88ea', hor: '#e0e4f0', bot: '#e4e2e0', sun: '#ffd4a0', si: 2.9, hemi: 1.0, el: 24 },
+      { t: 0.86, top: '#4a5aa8', hor: '#ff9a78', bot: '#e0a090', sun: '#ff8a5a', si: 1.5, hemi: 0.6, el: 5 },
+      { t: 1.00, top: '#141c40', hor: '#3a3a70', bot: '#20244a', sun: '#a8b8ff', si: 0.7, hemi: 0.42, el: 42 }
+    ],
+    stone: ['#e6dfd2', '#ddd5c6', '#eae4d8', '#d4ccbc'], stoneDark: '#a8a092', mortar: '#cfc8ba', cap: '#d8cfbd',
+    plaster: ['#f4f2ec', '#f0eee8', '#f6f4ee'], beam: '#3a3d42', pitch: 0.05, lean: 0, smoke: '#f0f0f0',
+    cobble: ['#e2ded6', '#d8d4cc', '#ccc8c0', '#e8e4dc'], path: 'slab', fence: 'hedge', rock: 'mossy',
+    roofs: [{ name: '纯白', hex: '#f2f2ee' }, { name: '炭灰', hex: '#3a3d42' }, { name: '柚木', hex: '#8a5a3a' }, { name: '清水泥', hex: '#b8b4ac' }, { name: '古铜', hex: '#6a5a48' }],
+    trees: ['fanpalm', 'cypress', 'olive', 'jacaranda', 'sycamore'],
+    grassTint: [0.9, 1.08, 0.85], water: ['#e0f8fa', '#2aa8c8', '#6fd8e8'], gnd: '#4f7a3a',
+    rockA: '#8a857c', rockB: '#a8a398', mossA: '#7a7a68', mossB: '#9a9a86',
+    windowColor: '#4a6078', windowGlow: '#ffc880', windowMetal: 0.7, windowRough: 0.05, windowDay: 0.05,
+    glow: 0, grassGlow: 0, motes: 0, firefly: '#ffe68a', css: '#bfe0fa', sheep: false
   }
 };
 // 每种风格的地面：草的颜色、高矮、疏密，路面泥土和岸边沙地的色调，以及随机布局里各层用什么树
@@ -3546,18 +5022,29 @@ Object.assign(STYLES.magic, {
 Object.assign(STYLES.scifi, {
   grassCols: ['#6fc08a', '#7fd09a', '#5fb07f', '#8fd8a8', '#74c896'], bladeTint: [1, 1, 1], groundTint: [0.85, 1.15, 1.0],
   grassH: 0.55, grassDensity: 0.85, meadowDensity: 0.25, dirtTint: [1.35, 1.38, 1.42], dirtGrey: 0.85, sandTint: [1.15, 1.18, 1.2],
-  roles: { edge: ['cyberpine'], grove: ['orbtree', 'cyberpine'], accent: ['helix', 'orbtree'] }
+  roles: { edge: ['cyberpine'], grove: ['orbtree', 'cyberpine', 'solartree'], accent: ['helix', 'orbtree', 'fibertree', 'solartree'] }
 });
 Object.assign(STYLES.oriental, {
   grassCols: ['#4f7a2e', '#5a8a34', '#466e2a', '#6a9a3c', '#557f30'], bladeTint: [1, 1, 1], groundTint: [0.78, 1.0, 0.68],
   grassH: 0.5, grassDensity: 0.45, meadowDensity: 0.35, dirtTint: [1.5, 1.48, 1.4], dirtGrey: 0.9, sandTint: [1.1, 1.08, 1.0],
   roles: { edge: ['blackpine', 'bamboo', 'blackpine'], grove: ['japmaple', 'bamboo', 'sakura'], accent: ['sakura', 'shidare', 'japmaple', 'blackpine'] }
 });
+Object.assign(STYLES.villa, {
+  grassCols: ['#5f9a3c', '#6aa844', '#559034', '#72b04a', '#64a040'], bladeTint: [1, 1, 1], groundTint: [0.82, 1.12, 0.74],
+  grassH: 0.42, grassDensity: 1.0, meadowDensity: 0.15, dirtTint: [1.45, 1.42, 1.36], dirtGrey: 0.8, sandTint: [1.15, 1.12, 1.05],
+  roles: { edge: ['cypress', 'fanpalm', 'cypress', 'olive'], grove: ['olive', 'sycamore', 'jacaranda'], accent: ['fanpalm', 'jacaranda', 'olive'] }
+});
 function restyleGround() {
   const c = new THREE.Color(), pal = ST.grassCols;
   for (let k = 0; k < GN; k++) { c.set(pal[Math.floor(GQ[k] * pal.length) % pal.length]).offsetHSL(0, 0, (GD[k] - 0.5) * 0.06); grass.setColorAt(k, c); }
   grass.instanceColor.needsUpdate = true;
   terrainU.uDirtTint.value.setRGB(...ST.dirtTint); terrainU.uSandTint.value.setRGB(...ST.sandTint); terrainU.uDirtGrey.value = ST.dirtGrey;
+  // 未来风：地砖 + 种植池
+  terrainU.uTech.value = ST.tech ? 1 : 0;
+  const at = tGeo.attributes.aTech.array;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) at[j * N + i] = ST.tech ? planterMask(gxy(i), gxy(j)) : 0;
+  tGeo.attributes.aTech.needsUpdate = true;
+  refreshGrass([-L, -L, L, L]);
 }
 function applyStyle(key) {
   ST = STYLES[key]; S.style = key;
@@ -3567,14 +5054,14 @@ function applyStyle(key) {
   S.roof = ROOFS[0].hex; if (S.tree !== 'mix' && !ST.trees.includes(S.tree)) S.tree = 'mix';
   ROCK_A.set(ST.rockA); ROCK_B.set(ST.rockB); MOSS_A.set(ST.mossA); MOSS_B.set(ST.mossB);
   KEYS.splice(0, KEYS.length, ...ST.keys);
-  waterMat.attenuationColor.set(ST.water[2]);
+  waterMat.attenuationColor.set(waterCols()[2]);
   windowMat.color.set(ST.windowColor); windowMat.emissive.set(ST.windowGlow); windowMat.metalness = ST.windowMetal; windowMat.roughness = ST.windowRough;
   glowU.value = ST.glow; grassGlowU.value = ST.grassGlow;
   fireflies.m.color.set(ST.firefly);
   document.documentElement.style.setProperty('--sky', ST.css);
   restyleGround();
   setMusicStyle(key);
-  applyTime(+todEl.value);
+  applyTime(DAY.t);
   renderOptions(); renderScenes();
 }
 
@@ -3646,6 +5133,8 @@ const SEEDS = {
     seedTrees([[-16, 6], [-13, 6], [-16, 9], [-13, 9], [-10, 9], [-16, 12], [-13, 12], [-10, 15.5], [-4, 15]], 'cyberpine');
     seedTrees([[4, 9.5], [7.5, 12.5], [11, 12], [16, 4], [15, -3], [-16, -6], [-14, -11], [2, -14], [-8, -14]], 'orbtree', 2.6);
     seedTrees([[0, 12], [-6, 17], [9, 15], [17, -8], [6, -13]], 'helix', 3.0);
+    seedTrees([[5.5, 3.2], [-10.5, 1.5], [13.5, 2.5], [-3, 9.5], [10, -8]], 'solartree', 3.2);
+    seedTrees([[2.2, 7.6], [-7, 9.5], [12.5, -4], [-12, -7.5], [7.5, 8], [16.5, -10.5]], 'fibertree', 3.4);
     seedRocks([[3, 13], [-11, 16], [17, 9], [13, -13], [-17, -1]]);
     seedFlowers([[1, 4], [-6, 4], [5, 3.5], [12, -6]]);
   },
@@ -3667,6 +5156,26 @@ const SEEDS = {
     seedTrees([[8.5, 8.5], [-12, 4.5], [-6.5, 10.5]], 'japmaple', 3.2);
     seedRocks([[-2.6, 1.2], [-8.7, 6.8], [-0.8, 6.8, 0.8], [-6, 1.4], [3.6, -3.6, 0.7], [7.6, -4.6, 0.8]]);
     seedFlowers([[3, 4], [-11, -3], [7, -3], [10, 6], [-4, 9]]);
+  },
+  villa() {
+    // 一圈两米多高的绿篱把整个宅院围起来保证私密，只在车道进来的地方开门；矮绿篱只给车道和泳池勾边
+    const cx = -1, cz = -1, rx = 15.5, rz = 13;
+    buildPath(sps([[-11, 17], [-10, 11], [-9, 5.5], [-8.6, 0.5], [-8, -2.6]]), 1.1);
+    buildWall(sps(ringPts(cx, cz, rx, rz, 0, 360, 10)), 0.4, ROOFS[0].hex);
+    buildHouse(sp(-6.5, -4.6), sp(3.5, -4.6), 1.2, ROOFS[0].hex, { W: 4.6, H: 3.4, eave: 0.6 });
+    buildHouse(sp(8, -8.5), sp(12.5, -6), 1.6, ROOFS[3].hex, { H: 1.8, eave: 0.45 });
+    buildPool(sp(-5, 2.4), sp(3, 2.4), 1.8);
+    buildFence(sps([[-11, 8.2], [-10.4, 5.5], [-10, 2.0]]), 2.0);
+    buildFence(sps([[-8, 8.2], [-7.6, 5.5], [-7.3, 2.2]]), 2.1);
+    buildFence(sps([[5.2, -0.6], [5.2, 4.2], [3.8, 5.6]]), 2.2);
+    seedTrees([[-12.8, 6], [-12.6, 1.5], [-12.2, -2.4], [6.6, 5.6], [7, 0.8], [-6.2, 7.4], [4.4, 8]], 'fanpalm', 2.2);
+    // 意大利柏沿着后面那段绿篱内侧排一行
+    seedTrees([200, 220, 240, 260, 280, 300].map(d => { const a = d * Math.PI / 180; return [cx + Math.cos(a) * rx * 0.86, cz + Math.sin(a) * rz * 0.86]; }), 'cypress', 2.5);
+    seedTrees([[10, 2], [12, -1.5], [-14, -1], [0, 9], [5, 9]], 'olive', 2.8);
+    seedTrees([[-3.5, 8.6], [9.5, 14.5], [-13, -4.5]], 'jacaranda', 3.0);
+    seedTrees([[17.5, -9], [-19, 7], [13, 15.5]], 'sycamore', 3.2);
+    seedRocks([[3, 14.8, 0.8], [-17.5, 12, 0.9], [18, 6.5, 1.0]]);
+    seedFlowers([[-7.4, 4], [4.6, -1.6], [-2.4, 7.4], [7.6, 9.4], [-12.4, -3.2]]);
   }
 };
 // 随机布置：按村落结构来摆——
@@ -3700,7 +5209,7 @@ function randomLayout() {
   mark(C.x, C.z, 1.8 * WS);
   // 3. 城墙：在村子背后半包围，开口朝向池塘；院墙式留一道朝池塘的门
   const toward = Pd ? Pd.a : rand(0, 6.28), back = toward + Math.PI;
-  const ring = Math.random() < (ST.build === 'oriental' ? 0.6 : 0.35);
+  const ring = Math.random() < (ST.build === 'villa' ? 1 : ST.build === 'oriental' ? 0.6 : 0.35);
   for (const k0 of [rand(8.2, 9.5), 7.6, 7.0]) {
     const rad = k0 * WS, span = ring ? Math.PI * 2 - 0.75 : rand(2.6, 3.7), pts = [];
     for (let t = 0; t <= 30; t++) { const a = back - span / 2 + span * t / 30, rr = rad * (1 + (noise(Math.cos(a) * 1.2 + 9, Math.sin(a) * 1.2) - 0.5) * 0.16); pts.push({ x: C.x + Math.cos(a) * rr, z: C.z + Math.sin(a) * rr }); }
@@ -3785,13 +5294,20 @@ function randomLayout() {
   }
   // 11. 鱼
   if (Pd) for (let i = 0; i < 3 + Math.floor(rand(0, 3)); i++) { const q = waterPoint(Pd.x, Pd.z, 4, 0.3); if (q) spawnFish(q.x, q.z, ST.build === 'oriental' ? 'koi' : 'mix', 3 + i * 0.15); }
+  // 12. 别墅风格：在广场边找一块空地挖个泳池
+  if (ST.build === 'villa') for (let t = 0; t < 120; t++) {
+    const a = rand(0, 6.28), d = rand(2.5, 9) * WS, x = C.x + Math.cos(a) * d, z = C.z + Math.sin(a) * d, ta = a + Math.PI / 2 + (t % 2 ? 0 : Math.PI / 2), hl = t < 40 ? 3 : t < 80 ? 2.2 : 1.6, gap = t < 80 ? 2.0 : 1.3;
+    const ends = [[x - Math.cos(ta) * hl, z - Math.sin(ta) * hl], [x, z], [x + Math.cos(ta) * hl, z + Math.sin(ta) * hl]];
+    if (!ends.every(([px, pz]) => inIsland(px, pz, 3) && !wet(px, pz) && entities.every(e => !e.block || e.type === 'tree' || e.dist(px, pz) > gap))) continue;
+    buildPool({ x: ends[0][0], z: ends[0][1] }, { x: ends[2][0], z: ends[2][1] }, 2.4); break;
+  }
 }
 
 // ================= 换场景 / 随机地形 =================
 function clearWorld() {
   for (const e of entities) { scene.remove(e.group); e.group.traverse(o => { if (o.isMesh && o.userData.own) o.geometry.dispose(); }); }
   entities.length = 0; tweens.length = 0; S.stroke = null; preview.visible = false;
-  D.fill(0); P.fill(0); WET.fill(0); WD.fill(0); WM.fill(0); WDP.fill(1); GHIDE.fill(0);
+  D.fill(0); P.fill(0); WET.fill(0); WD.fill(0); WM.fill(0); WDP.fill(1); WLP.fill(1); GHIDE.fill(0);
   litterDirty = true;
 }
 function setTerrain(t) {
@@ -3841,7 +5357,7 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
-setTool('wall');
+setTool(null);
 
 const clock = new THREE.Clock();
 let perfT = 0, first = true;
@@ -3854,13 +5370,20 @@ function frame(fixedDt) {
     if (k >= 1) { tweens.splice(i, 1); tw.done && tw.done(); }
   }
   if (S.stroke) { const t = TOOL[S.stroke.tool]; t.frame && t.frame(dt); }
-  grassU.uTime.value = perfT;
-  waterNormal.offset.set(perfT * 0.02, perfT * 0.013);
+  grassU.uTime.value = perfT; skyU.uT.value = perfT;
+  updateWind(dt, perfT); tickTime(dt);
+  // 水面细波顺风漂，风越大波纹越明显
+  waterNormal.offset.x -= dt * (0.012 + WIND.x * WIND.k * 0.02); waterNormal.offset.y -= dt * (0.008 + WIND.z * WIND.k * 0.02);
+  waterMat.normalScale.setScalar(Math.min(0.5, 0.12 + 0.1 * WIND.k));
   clouds.rotation.y += dt * 0.006;
   for (const e of entities) {
-    if (e.sway) { e.sway.rotation.z = Math.sin(perfT * 1.3 + e.ph) * 0.018; e.sway.rotation.x = Math.cos(perfT * 1.1 + e.ph) * 0.012; }
-    for (const f of e.flags) { f.rotation.y = Math.sin(perfT * 2.6 + f.userData.ph) * 0.4; f.scale.x = 1 + Math.sin(perfT * 5 + f.userData.ph) * 0.08; }
-    for (const c of e.chimneys) { c.t += dt; if (c.t > 0.55) { c.t = 0; spawnPuff(c.x + rand(-0.05, 0.05), c.y, c.z, { color: c.col || '#f2ede6', size: 0.32, life: 3.6, vy: 0.45, vx: 0.22, vz: 0.08, grow: 2.6, opacity: 0.45 }); } }
+    if (e.sway) {
+      // 整棵树绕根部顺风倾斜：阵风经过时弯得多，再叠一点自己的晃动
+      const g = gustAt(e.x, e.z), lean = (WIND.k * (0.005 + 0.02 * g) + Math.sin(WIND.swayT * 0.8 + e.ph) * 0.005 * (0.5 + WIND.k)) * e.stiff;
+      e.sway.quaternion.setFromAxisAngle(_p.set(WIND.z, 0, -WIND.x), lean).multiply(e.yawQ);
+    }
+    for (const f of e.flags) { f.rotation.y = yaw(WIND.x, WIND.z) + Math.sin(WIND.swayT * 2.2 + f.userData.ph) * 0.5 / (1 + WIND.k); f.scale.x = 1 + Math.sin(WIND.swayT * 4 + f.userData.ph) * 0.08 * (0.5 + WIND.k * 0.5); }
+    for (const c of e.chimneys) { c.t += dt; if (c.t > 0.55) { c.t = 0; spawnPuff(c.x + rand(-0.05, 0.05), c.y, c.z, { color: c.col || '#f2ede6', size: 0.32, life: 3.6, vy: 0.45, grow: 2.6, opacity: 0.45, wind: 1 }); } }
     if (e.sheep) updateSheep(e, dt);
     if (e.fish) updateFish(e, dt);
     if (e.spin) for (const sp of e.spin) sp.rotation.y += dt * 0.6;
@@ -3870,13 +5393,15 @@ function frame(fixedDt) {
     const p = puffs[i]; p.t += dt; const k = p.t / p.life;
     if (k >= 1) { scene.remove(p.s); puffPool.push(p.s); puffs.splice(i, 1); continue; }
     p.s.position.x += p.vx * dt; p.s.position.y += p.vy * dt; p.s.position.z += p.vz * dt;
+    // 炊烟：越往上越被风带走，风大时也升得更低、更扁
+    if (p.wind) { const w = WIND.k * (0.25 + 1.0 * k) * (0.7 + 0.6 * gustAt(p.s.position.x, p.s.position.z)) + 0.08; p.s.position.x += WIND.x * w * dt; p.s.position.z += WIND.z * w * dt; p.s.position.y -= p.vy * dt * (1 - 1 / (1 + 0.3 * WIND.k)); }
     p.s.scale.setScalar(p.size * (1 + p.grow * k));
     p.s.material.opacity = p.op * (1 - k) * Math.min(1, k * 6);
   }
   updateMotes(fireflies, perfT, 1.2);
   updateMotes(pollen, perfT * 0.5, 2.0);
   terrainU.uTime.value = perfT;
-  if (envDirty && perfT - lastBake > 0.15) { bakeEnv(); lastBake = perfT; }
+  if (envDirty && perfT - lastBake > (S.timeFlow === 'stop' ? 0.15 : 0.7)) { bakeEnv(); lastBake = perfT; }
   sky.position.copy(camera.position);
   controls.update();
   // 阳光光晕：把太阳方向投到屏幕上，暖光从那一侧漫进来
@@ -3886,7 +5411,7 @@ function frame(fixedDt) {
     sunGlowEl.style.setProperty('--sx', (clamp((_p.x + 1) / 2, -0.4, 1.4) * 100).toFixed(1) + '%');
     sunGlowEl.style.setProperty('--sy', (clamp((1 - _p.y) / 2, -0.4, 1.4) * 100).toFixed(1) + '%');
   } else sunGlowEl.style.opacity = '0';
-  updateWeather(dt);
+  updateWeather(dt); updateFalling(dt); updateWisps(dt); updateBirds(dt); placeHandles();
   composer.render();
   if (first) { first = false; document.getElementById('loading').classList.add('gone'); }
 }
